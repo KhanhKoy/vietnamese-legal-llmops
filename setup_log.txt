@@ -84,3 +84,106 @@
 11) Ghi chú:
 - `boto3` sẽ cần nếu triển khai lưu artifacts lên AWS S3
 - sau này cần đưa `boto3` vào `requirements.txt` và `Dockerfile`
+
+12) Thứ tự các file nên chạy từ đầu đến hiện tại:
+1. `src/rag_core/config.py`
+   - nạp cấu hình chung từ `.env`
+2. `src/rag_core/dataset_reader.py`
+   - đọc metadata và content từ Hugging Face theo kiểu streaming/batch
+3. `src/rag_core/chunking.py`
+   - tách văn bản luật thành chunk
+4. `src/rag_core/embeddings.py`
+   - tạo embedding từ text chunk
+5. `src/rag_core/vector_store.py`
+   - lưu embeddings và chunk vào vector store cục bộ
+6. `src/rag_core/pipeline.py`
+   - ghép luồng build index: document -> chunk -> embed -> store
+7. `scripts/build_index.py`
+   - chạy để build vector index lần đầu
+8. `src/rag_core/retriever.py`
+   - truy xuất chunk liên quan từ vector store
+9. `src/rag_core/prompt.py`
+   - tạo prompt cho LLM
+10. `src/rag_core/generator.py`
+   - sinh câu trả lời từ model ngôn ngữ
+11. `src/rag_core/qa_service.py`
+   - ghép retriever + prompt + generator thành luồng hỏi đáp
+12. `scripts/run_api.py`
+   - chạy API chatbot sau khi core đã ổn định
+
+13) Quy tắc chạy thực tế:
+- Lần đầu chỉ cần chạy `scripts/build_index.py` để tạo vector store.
+- Những lần sau nếu dữ liệu không đổi thì không cần chunk lại, chỉ cần load vector store và chạy chatbot/API.
+- Chỉ build lại index khi:
+  - đổi dữ liệu
+  - đổi chunk size/overlap
+  - đổi embedding model
+  - muốn cập nhật lại toàn bộ index
+
+14) Ghi chú cho README sau này:
+- Build index là bước tiền xử lý 1 lần.
+- Chatbot runtime chỉ cần retriever + generator + API.
+- Dữ liệu Hugging Face được đọc theo streaming/batch để tránh tràn RAM.
+
+15) Cập nhật mới về xử lý tràn RAM:
+- `src/rag_core/dataset_reader.py`
+  - đọc metadata bằng streaming
+  - đọc `content.parquet` theo batch nhỏ bằng `iter_batches()`
+  - không dùng `pandas` cho toàn bộ row group lớn nữa
+- `src/rag_core/pipeline.py`
+  - xử lý theo luồng: document -> chunk -> embed -> add vào vector store
+  - gom chunk theo batch nhỏ trước khi embed
+  - tránh giữ toàn bộ document/chunk trong RAM cùng lúc
+- `src/rag_core/vector_store.py`
+  - lưu vector store xuống SQLite thay vì giữ toàn bộ embeddings trong RAM
+  - đọc/chấm điểm theo từng batch khi search
+  - giảm nguy cơ tràn RAM khi corpus lớn
+
+16) Cách chạy hiện tại:
+- chạy thử nhỏ trước:
+  - `python scripts/build_index.py --metadata-limit 100 --content-limit 100`
+- nếu ổn mới tăng dần limit
+
+17) Ghi chú:
+- mục tiêu chính là giảm RAM khi build index từ Hugging Face dataset lớn
+- nếu vẫn còn tràn RAM, cần giảm thêm:
+  - `content_batch_size`
+  - `embedding_batch_size`
+- khi build xong, chatbot runtime chỉ cần load vector store và truy xuất, không cần chunk lại nếu dữ liệu không đổi
+
+18) Cập nhật tối ưu RAM khi build index:
+- `src/rag_core/dataset_reader.py`
+  - đã thay cách giữ toàn bộ metadata trong RAM
+  - metadata được stream vào SQLite tạm trên ổ đĩa
+  - content vẫn đọc theo `iter_batches(batch_size=64)`
+  - lookup metadata bằng SQLite thay vì Python dict lớn
+  - giảm nguy cơ OOM khi metadata rất lớn
+
+- `src/rag_core/vector_store.py`
+  - thêm `commit()` để commit SQLite định kỳ
+  - giảm tích tụ WAL cache khi `add()` liên tục
+  - hỗ trợ pipeline flush/commit theo lô
+
+- `src/rag_core/pipeline.py`
+  - thêm `gc.collect()` sau mỗi lần commit định kỳ
+  - commit sau mỗi `commit_interval` chunk
+  - giảm bộ nhớ tạm của chunk dicts, embeddings buffer, document strings
+  - build index theo luồng streaming, không giữ toàn bộ dữ liệu trong RAM
+
+19) 3 vấn đề tràn RAM đã được xử lý:
+- metadata lớn không còn load vào Python heap
+- WAL cache SQLite được commit định kỳ
+- đối tượng tạm được thu hồi bằng garbage collection
+
+20) Cách build index hiện tại:
+- chạy `scripts/build_index.py`
+- build theo batch nhỏ
+- commit định kỳ mỗi 500 chunk
+- sau khi xong gọi `store.save()` và `gc.collect()`
+
+21) Ghi chú:
+- đây là hướng xử lý phù hợp để chạy trên máy cấu hình thấp hơn
+- nếu vẫn tràn RAM, tiếp tục giảm:
+  - `document_batch_size`
+  - `embedder.batch_size`
+  - `commit_interval`
