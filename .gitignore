@@ -3,15 +3,15 @@
 .env.local
 .env.*.local
 
-# # Python
-# __pycache__/
-# *.py[cod]
-# *$py.class
-# *.pyo
-# *.pyd
-# *.pyc
-# *.pyo
-# *.pyd
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
 
 # # Distribution / packaging
 # .Python
