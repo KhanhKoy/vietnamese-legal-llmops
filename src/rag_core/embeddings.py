@@ -10,10 +10,16 @@ from .config import get_settings
 
 class EmbeddingService:
     def __init__(self) -> None:
+        import torch # Khai báo torch để kiểm tra GPU
         settings = get_settings()
         self.model_name = settings.embedding_model_name or "AITeamVN/Vietnamese_Embedding"
         self.batch_size = settings.embedding_batch_size
-        self.model: Any = SentenceTransformer(self.model_name)
+        
+        # Tự động chọn 'cuda' nếu môi trường (Kaggle/PC) có GPU, ngược lại dùng 'cpu'
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        # Truyền thêm tham số device vào đây
+        self.model: Any = SentenceTransformer(self.model_name, device=device)
 
     def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
         texts_list = [str(text).strip() for text in texts]
