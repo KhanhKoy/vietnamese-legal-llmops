@@ -1,0 +1,86 @@
+[2026-06-23]
+
+1) Cài package:
+- pip install datasets
+- pip install fsspec
+- pip install pyarrow
+- pip install sentence-transformers
+- pip install numpy
+- pip install python-dotenv
+
+2) File đã tạo/sửa:
+- src/rag_core/config.py
+- src/rag_core/dataset_reader.py
+- src/rag_core/chunking.py
+- src/rag_core/embeddings.py
+- src/rag_core/vector_store.py
+
+3) Mục đích:
+- datasets: đọc Hugging Face dataset
+- fsspec: đọc file parquet từ URL
+- pyarrow: xử lý parquet
+- sentence-transformers: tạo embedding
+- numpy: xử lý vector
+- python-dotenv: đọc biến môi trường
+
+4) Ghi chú cho Dockerfile sau này:
+- cần cài các package trên
+- cần copy src/ và requirements.txt
+- cần set biến môi trường HF_DATASET_NAME, HF_CONTENT_PARQUET_URL, EMBEDDING_MODEL_NAME
+
+
+5) Kiến thức mới đã tìm hiểu:
+- `chunking.py` dùng để tách văn bản luật thành các đoạn nhỏ trước khi tạo embedding.
+- Ưu tiên tách theo heading pháp lý như: Chương, Điều, Mục, Khoản.
+- Nếu văn bản không có cấu trúc rõ ràng thì dùng cách chia theo cửa sổ ký tự (`chunk_size_chars`) và chồng lấn (`chunk_overlap_chars`).
+- Mỗi chunk cần giữ lại metadata của document gốc để truy xuất nguồn sau này.
+- Chunk nên có các trường: `chunk_id`, `document_id`, `text`, `chunk_index`, `metadata`.
+- Cần chuẩn hóa text trước khi chia: bỏ `\r\n`, gộp khoảng trắng, giảm dòng trống thừa.
+- Mục tiêu của chunking là giúp truy xuất chính xác hơn khi làm RAG cho dữ liệu pháp luật.
+
+
+6) Cập nhật thay đổi code:
+- `src/rag_core/embeddings.py`
+  - dùng model embedding tiếng Việt `AITeamVN/Vietnamese_Embedding`
+  - sửa `dimension` để lấy embedding dimension an toàn hơn
+- `src/rag_core/vector_store.py`
+  - lưu embeddings và chunks cục bộ bằng `.npy` và `.pkl`
+  - kiểm tra đồng bộ số lượng chunks và embeddings
+- `src/rag_core/prompt.py`
+  - tạo prompt hệ thống cho chatbot luật
+  - ghép context từ các chunk truy xuất được
+- `src/rag_core/generator.py`
+  - thêm lớp sinh câu trả lời từ LLM
+- `src/rag_core/qa_service.py`
+  - nối retriever + prompt + generator thành luồng hỏi đáp hoàn chỉnh
+
+7) Lệnh đã chạy / cần ghi lại trong terminal:
+- pip install datasets
+- pip install fsspec
+- pip install pyarrow
+- pip install sentence-transformers
+- pip install numpy
+- pip install python-dotenv
+- pip install transformers
+- pip install torch
+
+8) Ghi chú:
+- `datasets`, `fsspec`, `pyarrow` dùng để đọc dữ liệu từ Hugging Face
+- `sentence-transformers` dùng để tạo embedding
+- `numpy` dùng để xử lý vector
+- `python-dotenv` dùng để đọc biến môi trường
+- `transformers`, `torch` dùng cho phần sinh câu trả lời
+- các package trên sau này cần đưa vào `requirements.txt` và `Dockerfile`
+
+9) Cập nhật mới:
+- `scripts/sync_to_s3.py`
+  - thêm script đồng bộ artifacts local lên AWS S3
+  - dùng `boto3` để upload toàn bộ file trong `models/vector_store/`
+  - hỗ trợ tham số `--bucket`, `--prefix`, `--source-dir`
+
+10) Package mới cần cài:
+- pip install boto3
+
+11) Ghi chú:
+- `boto3` sẽ cần nếu triển khai lưu artifacts lên AWS S3
+- sau này cần đưa `boto3` vào `requirements.txt` và `Dockerfile`

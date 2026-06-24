@@ -1,0 +1,14 @@
+datasets
+fsspec
+pyarrow
+numpy
+python-dotenv
+sentence-transformers
+transformers
+torch
+fastapi
+uvicorn
+pydantic
+pytest
+requests
+boto3
