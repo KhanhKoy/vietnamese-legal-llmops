@@ -1,16 +1,32 @@
 from __future__ import annotations
 
 import gc
+import json
+import os
 import sqlite3
 import tempfile
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional
 
-import fsspec
-import pyarrow.parquet as pq
-from datasets import load_dataset
-
+from .chunking import html_to_text
 from .config import get_settings
+
+
+METADATA_CONFIG = "metadata"
+CONTENT_CONFIG = "content"
+METADATA_PARQUET_PATH = os.getenv("HF_METADATA_PARQUET_PATH", "data/metadata.parquet")
+CONTENT_PARQUET_PATH = os.getenv("HF_CONTENT_PARQUET_PATH", "data/content.parquet")
+EXPIRED_FULL_STATUS = "Hết hiệu lực toàn bộ"
+
+METADATA_COLUMNS = {
+    "id",
+    "title",
+    "so_ky_hieu",
+    "ngay_ban_hanh",
+    "loai_van_ban",
+    "co_quan_ban_hanh",
+    "tinh_trang_hieu_luc",
+}
 
 
 @dataclass
@@ -21,45 +37,136 @@ class LegalDocument:
 
 
 def _normalize_id(value: Any) -> str:
-    return "" if value is None else str(value)
+    return "" if value is None else str(value).strip()
 
 
-def iter_metadata_rows(limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
+def _normalize_text(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _is_expired_full(row: Dict[str, Any]) -> bool:
+    status = _normalize_text(row.get("tinh_trang_hieu_luc")).casefold()
+    return status == EXPIRED_FULL_STATUS.casefold()
+
+
+def _parquet_path_for_config(config_name: str) -> str:
+    if config_name == METADATA_CONFIG:
+        return METADATA_PARQUET_PATH
+    if config_name == CONTENT_CONFIG:
+        return CONTENT_PARQUET_PATH
+    raise ValueError(f"Unsupported dataset config: {config_name}")
+
+
+def _iter_parquet_config(
+    config_name: str,
+    columns: Optional[List[str]] = None,
+    batch_size: int = 1024,
+) -> Iterator[Dict[str, Any]]:
     """
-    Đọc metadata theo kiểu streaming để tránh load toàn bộ vào RAM.
+    Read HuggingFace dataset parquet files directly.
+
+    This avoids `datasets.load_dataset()`, which is currently causing a native
+    Windows access violation in this environment when iterating the metadata
+    split. We still process rows in small Arrow batches and never convert the
+    full dataset to Pandas.
     """
     settings = get_settings()
-    dataset = load_dataset(
-        settings.hf_dataset_name,
-        settings.hf_metadata_config,
-        streaming=True,
-    )
-    split_name = "data" if "data" in dataset else next(iter(dataset.keys()))
+    parquet_path = _parquet_path_for_config(config_name)
 
-    count = 0
-    for row in dataset[split_name]:
-        yield dict(row)
-        count += 1
-        if limit is not None and count >= limit:
+    print(
+        f"[dataset_reader] Downloading parquet config={config_name}, path={parquet_path}...",
+        flush=True,
+    )
+    from huggingface_hub import hf_hub_download
+    import pyarrow.parquet as pq
+
+    local_path = hf_hub_download(
+        repo_id=settings.hf_dataset_name,
+        repo_type="dataset",
+        filename=parquet_path,
+    )
+    print(
+        f"[dataset_reader] Parquet ready for config={config_name}: {local_path}",
+        flush=True,
+    )
+
+    parquet_file = pq.ParquetFile(local_path, memory_map=False)
+    available_columns = set(parquet_file.schema.names)
+    selected_columns = (
+        [column for column in columns if column in available_columns]
+        if columns
+        else None
+    )
+
+    if columns:
+        missing = sorted(set(columns) - available_columns)
+        if missing:
+            print(
+                f"[dataset_reader] Warning: missing columns in {config_name}: {missing}",
+                flush=True,
+            )
+
+    print(
+        f"[dataset_reader] Iterating parquet config={config_name}, columns={selected_columns or 'ALL'}...",
+        flush=True,
+    )
+    for batch in parquet_file.iter_batches(
+        batch_size=batch_size,
+        columns=selected_columns,
+    ):
+        data = batch.to_pydict()
+        row_count = len(next(iter(data.values()))) if data else 0
+        for index in range(row_count):
+            yield {key: values[index] for key, values in data.items()}
+
+
+def iter_metadata_rows(
+    limit: Optional[int] = None,
+    filter_expired: bool = True,
+) -> Iterator[Dict[str, Any]]:
+    yielded = 0
+
+    for row in _iter_parquet_config(
+        METADATA_CONFIG,
+        columns=sorted(METADATA_COLUMNS),
+        batch_size=2048,
+    ):
+        doc_id = _normalize_id(row.get("id"))
+        if not doc_id:
+            continue
+
+        if filter_expired and _is_expired_full(row):
+            continue
+
+        metadata = {
+            key: row.get(key)
+            for key in METADATA_COLUMNS
+            if key in row
+        }
+        metadata["id"] = doc_id
+
+        yield metadata
+        yielded += 1
+
+        if limit is not None and yielded >= limit:
             break
 
 
 def _build_metadata_db(
     metadata_limit: Optional[int] = None,
+    filter_expired: bool = True,
 ) -> str:
-    """
-    Stream tất cả metadata vào một SQLite tạm thời trên ổ cứng.
-    Trả về đường dẫn file .db để dùng cho tra cứu.
-
-    Giải pháp này chỉ dùng O(1) RAM vì từng row được insert ngay lập tức
-    xuống SQLite, không giữ gì trong Python heap.
-    """
+    print("[dataset_reader] Loading metadata into temporary SQLite...", flush=True)
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
+    print(f"[dataset_reader] Metadata temp DB: {tmp.name}", flush=True)
 
+    print("[dataset_reader] Opening SQLite connection...", flush=True)
     conn = sqlite3.connect(tmp.name)
+    print("[dataset_reader] SQLite connection opened.", flush=True)
     conn.execute("PRAGMA synchronous=OFF;")
     conn.execute("PRAGMA journal_mode=MEMORY;")
+    conn.execute("PRAGMA temp_store=MEMORY;")
     conn.execute(
         """
         CREATE TABLE meta (
@@ -68,120 +175,110 @@ def _build_metadata_db(
         )
         """
     )
-
-    import json
+    print("[dataset_reader] Metadata table ready. Start iterating metadata rows...", flush=True)
 
     batch: list[tuple[str, str]] = []
-    for row in iter_metadata_rows(limit=metadata_limit):
+    inserted = 0
+    for row in iter_metadata_rows(
+        limit=metadata_limit,
+        filter_expired=filter_expired,
+    ):
         doc_id = _normalize_id(row.get("id"))
-        if not doc_id:
-            continue
-        # Strip id from payload to avoid duplicating key
         payload = {k: v for k, v in row.items() if k != "id"}
         batch.append((doc_id, json.dumps(payload, ensure_ascii=False)))
 
         if len(batch) >= 5000:
             conn.executemany(
-                "INSERT OR REPLACE INTO meta (id, payload) VALUES (?, ?)", batch
+                "INSERT OR REPLACE INTO meta (id, payload) VALUES (?, ?)",
+                batch,
             )
+            inserted += len(batch)
+            print(f"[dataset_reader] Metadata rows loaded: {inserted}", flush=True)
             batch.clear()
 
     if batch:
         conn.executemany(
-            "INSERT OR REPLACE INTO meta (id, payload) VALUES (?, ?)", batch
+            "INSERT OR REPLACE INTO meta (id, payload) VALUES (?, ?)",
+            batch,
         )
+        inserted += len(batch)
 
     conn.commit()
     conn.close()
+    print(f"[dataset_reader] Metadata SQLite completed: {inserted} rows.", flush=True)
     return tmp.name
 
 
-def iter_content_rows(
-    limit: Optional[int] = None,
-    batch_size: int = 64,
-) -> Iterator[Dict[str, Any]]:
-    """
-    Đọc content.parquet theo batch nhỏ, không dùng pandas để giảm RAM.
-    """
-    settings = get_settings()
+def iter_content_rows(limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
+    yielded = 0
 
-    with fsspec.open(settings.hf_content_parquet_url, mode="rb") as f:
-        parquet_file = pq.ParquetFile(f)
+    for row in _iter_parquet_config(
+        CONTENT_CONFIG,
+        columns=["id", "content_html"],
+        batch_size=64,
+    ):
+        doc_id = _normalize_id(row.get("id"))
+        content_html = row.get("content_html")
 
-        yielded = 0
-        for batch in parquet_file.iter_batches(
-            batch_size=batch_size,
-            columns=["id", "content"],
-        ):
-            data = batch.to_pydict()
-            ids = data.get("id", [])
-            contents = data.get("content", [])
+        if not doc_id or not content_html:
+            continue
 
-            for doc_id, content in zip(ids, contents):
-                yield {"id": doc_id, "content": content}
-                yielded += 1
-                if limit is not None and yielded >= limit:
-                    return
+        yield {
+            "id": doc_id,
+            "content_html": content_html,
+        }
+        yielded += 1
+
+        if limit is not None and yielded >= limit:
+            break
 
 
 def iter_documents(
     metadata_limit: Optional[int] = None,
     content_limit: Optional[int] = None,
     content_batch_size: int = 64,
+    filter_expired: bool = True,
 ) -> Iterator[LegalDocument]:
-    """
-    Đọc documents bằng cách join metadata + content trên ổ cứng.
+    _ = content_batch_size
+    meta_db_path = _build_metadata_db(
+        metadata_limit=metadata_limit,
+        filter_expired=filter_expired,
+    )
 
-    Metadata được stream vào một SQLite tạm trước, sau đó content được
-    duyệt và tra metadata tương ứng qua lookup trên SQLite. Phương pháp này
-    tránh hoàn toàn OOM vì không có dict nào giữ toàn bộ dữ liệu trong RAM.
-    """
-    import json
-
-
-    # --- Giai đoạn 1: load metadata vào file SQLite tạm (streaming) ---
-    meta_db_path = _build_metadata_db(metadata_limit=metadata_limit)
-
+    meta_conn: Optional[sqlite3.Connection] = None
     try:
         meta_conn = sqlite3.connect(meta_db_path)
         meta_conn.execute("PRAGMA synchronous=OFF;")
         meta_conn.execute("PRAGMA journal_mode=MEMORY;")
 
-        # --- Giai đoạn 2: duyệt content, lookup metadata từ SQLite ---
-        for content_row in iter_content_rows(
-            limit=content_limit, batch_size=content_batch_size
-        ):
+        print("[dataset_reader] Iterating content and joining by id...", flush=True)
+        for content_row in iter_content_rows(limit=content_limit):
             doc_id = _normalize_id(content_row.get("id"))
-            content = content_row.get("content", "")
-
-            if not doc_id or not content:
+            if not doc_id:
                 continue
 
-            # Lookup metadata
             row = meta_conn.execute(
-                "SELECT payload FROM meta WHERE id = ?", (doc_id,)
+                "SELECT payload FROM meta WHERE id = ?",
+                (doc_id,),
             ).fetchone()
-            metadata: Dict[str, Any] = json.loads(row[0]) if row else {}
+            if row is None:
+                continue
 
-            # Merge any extra fields from content row (excluding id/content)
-            extra = {
-                k: v
-                for k, v in content_row.items()
-                if k not in {"id", "content"}
-            }
-            metadata.update(extra)
+            metadata: Dict[str, Any] = json.loads(row[0])
+            metadata["id"] = doc_id
+
+            text = html_to_text(_normalize_text(content_row.get("content_html")))
+            if not text:
+                continue
 
             yield LegalDocument(
                 document_id=doc_id,
-                text=str(content),
+                text=text,
                 metadata=metadata,
             )
-
-        meta_conn.close()
     finally:
-        # --- Giai đoạn 3: dọn dẹp file tạm ---
-        import os
-
+        if meta_conn is not None:
+            meta_conn.close()
         try:
             os.unlink(meta_db_path)
         except OSError:
@@ -193,12 +290,14 @@ def load_documents(
     metadata_limit: Optional[int] = None,
     content_limit: Optional[int] = None,
     content_batch_size: int = 64,
+    filter_expired: bool = True,
 ) -> List[LegalDocument]:
     return list(
         iter_documents(
             metadata_limit=metadata_limit,
             content_limit=content_limit,
             content_batch_size=content_batch_size,
+            filter_expired=filter_expired,
         )
     )
 

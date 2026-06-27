@@ -48,11 +48,14 @@ pip-delete-this-directory.txt
 # *.sublime-workspace
 
 # # Logs
-# *.log
+*.log
 
 # # SQLite database files (if stored locally)
 # *.sqlite3
 # *.db
+
+# Generated model/vector indexes
+models/
 
 # # OS generated files
 # .DS_Store

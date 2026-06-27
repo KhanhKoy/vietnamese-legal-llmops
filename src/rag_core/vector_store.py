@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
 from .config import get_settings
-from .embeddings import EmbeddingService
+
+if TYPE_CHECKING:
+    from .embeddings import EmbeddingService
 
 
 class VectorStore:
@@ -238,10 +240,12 @@ class VectorStore:
     def search(
         self,
         query: str,
-        embedder: Optional[EmbeddingService] = None,
+        embedder: Optional["EmbeddingService"] = None,
         top_k: int = 5,
     ) -> List[Dict[str, Any]]:
         if embedder is None:
+            from .embeddings import EmbeddingService
+
             embedder = EmbeddingService()
 
         query_embedding = embedder.embed_query(query)

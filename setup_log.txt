@@ -187,3 +187,6 @@
   - `document_batch_size`
   - `embedder.batch_size`
   - `commit_interval`
+
+  2169) Ghi chú riêng:
+  - mỗi lần chạy cần ".\venv\Scripts\activate" trước
