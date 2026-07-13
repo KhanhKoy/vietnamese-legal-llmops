@@ -1,0 +1,14 @@
+Nhóm việc 1: Xây dựng bộ lõi nạp dữ liệu (Luồng Xanh Lá)
+1. Cào/Tải dataset: Tải bộ dữ liệu vietnamese-legal-documents từ Hugging Face về dưới dạng file.
+2. Viết Script Chunking: Viết code Python đọc đống luật này, cắt nhỏ thành các đoạn văn bản (mỗi đoạn khoảng 500-1000 ký tự) nhưng phải giữ được từ khóa nhận diện (Ví dụ: "Điều 5, Nghị định 123...").
+3. Tạo S3 Bucket & Lambda: Tạo một bucket trên Amazon S3. Viết một hàm AWS Lambda bằng Python. Khi bạn ném một file luật mới vào S3, Lambda tự động chạy, gọi Bedrock Titan Embedding để biến văn bản thành dãy số (Vector). 
+4. Cài đặt Database: Tạo một instance Amazon RDS PostgreSQL, cài extension pgvector và tạo bảng để lưu đống Vector đó lại.
+Nhóm việc 2: Xây dựng Giao diện & Logic RAG (Luồng Xanh Dương)
+1. Code Giao diện Chainlit: Tạo file app.py, sử dụng thư viện chainlit để thiết kế khung chat chatbot trực quan.
+2. Viết hàm Retrieval: Viết hàm kết nối từ Chainlit tới RDS PostgreSQL bằng thư viện psycopg hoặc langchain. Khi user gõ câu hỏi $\rightarrow$ lấy câu hỏi đi so sánh độ tương đồng (Cosine Similarity) với cơ sở dữ liệu để lôi về các đoạn luật liên quan nhất.
+3. Viết hàm Generation: Thiết lập Prompt mẫu như ở Phần 1, gửi toàn bộ chuỗi Prompt tổng hợp sang Amazon Bedrock (LLM) và nhận kết quả trả về, dùng tính năng cl.Message().stream_token() của Chainlit để chữ chạy ra mượt mà từng từ trên màn hình.
+4. Lưu Lịch sử: Cấu hình Amazon DynamoDB làm nơi lưu giữ lịch sử hội thoại dựa trên ID của người dùng.  
+Nhóm việc 3: Hạ tầng mạng & Giám sát (Luồng Hồng & Tím)
+1. Cấu hình Mạng (VPC): Tạo mạng VPC trên AWS, thiết lập Public Subnet chứa ALB (Load Balancer) để hứng tên miền web, Private Subnet để giấu con máy ảo EC2 chạy Chainlit và RDS Database vào bên trong an toàn.  
+2. Tạo VPC Endpoint: Tạo VPC Endpoint dịch vụ (Interface Endpoint) cho Bedrock và DynamoDB đặt trong Private Subnet để máy ảo EC2 gọi dịch vụ ngoài mà không cần mở internet.  
+3. Đẩy Log & Alert: Cấu hình code Python đẩy log sang Amazon CloudWatch. Cấu hình Alarm trên CloudWatch nếu hệ thống bị lỗi 500 quá nhiều thì kích hoạt Amazon SNS bắn email cảnh báo thẳng về hòm thư của bạn.  

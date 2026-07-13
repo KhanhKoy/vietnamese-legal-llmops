@@ -187,3 +187,64 @@
   - `document_batch_size`
   - `embedder.batch_size`
   - `commit_interval`
+
+22) Các file liên quan đến nhóm việc 1 (Xây dựng bộ lõi nạp dữ liệu – Luồng Xanh Lá) đã được cập nhật để phản ánh kế hoạch triển khai trên AWS:
+
+src/rag_core/dataset_reader.py
+
+Thêm hỗ trợ đọc tài liệu từ S3 khi biến môi trường USE_S3 được bật.
+Giữ lại chế độ đọc từ dataset Hugging Face (snapshot) khi chạy local.
+Mỗi đối tượng S3 (tệp .txt hoặc .pdf) được xử lý dưới dạng một documento.
+src/rag_core/chunking.py
+
+Cải tiến hàm split_text để ưu tiên cắt tại các heading pháp lý (Chương, Điều, Mục, Khoản) và giữ chúng bên trong chunk.
+Nếu chunk vượt quá kíchくん cho phép, sẽ sử dụng sliding‑window bên trong đó.
+src/rag_core/embeddings.py
+
+Thêm tính năng sử dụng Amazon Bedrock Titan Embedding qua biến môi trường USE_BEDROCK_EMBEDDING.
+Khi không sử dụng Bedrock, fallback về Sentence‑Transformer local (sentence‑transformers/paraphrase‑multilingual‑MiniLM‑L12‑v2).
+Đảm bảo vector được chuẩn hoá L2 để tương thích với tìm kiếm cosine similarity.
+src/rag_core/vector_store.py
+
+Thay đổi khỏi FAISS + SQLite sang PostgreSQL + extension pgvector.
+Tự động tạo extension và bảng chunks với cột vector.
+Tạo chỉ mục ivfflat để tìm kiếm gần đúng nhanh (cosine similarity).
+Cung cấp các phương thức reset, add, search_by_embedding, search tương thích với API cũ.
+src/rag_core/config.py
+
+Thêm cấu hình kết nối PostgreSQL: pg_database, pg_user, pg_password, pg_host, pg_port (đọc từ biến môi trường).
+requirements.txt
+
+Thêm gói psycopg2-binary để kết nối PostgreSQL.
+src/rag_core/lambda_handler.py (mới)
+
+Hàm Lambda được kích hoạt bởi sự kiện S3 ObjectCreated.
+Tải file từ S3 (hỗ trợ .txt và .pdf), trích xuất văn bản, thực hiện chunking, tạo embedding (qua EmbeddingService – có thể là Bedrock hoặc local), rồi lưu vào PostgreSQL qua VectorStore.
+Đóng kết nối sau mỗi batch.
+Các bước tiếp triển khai
+Cấu hình môi trường:
+
+Đặt USE_S3=true và cung cấp VECTOR_S3_BUCKET (tùy chọn VECTOR_S3_PREFIX) nếu muốn đọc từ S3.
+Đặt USE_BEDROCK_EMBEDDING=true và cấu hình AWS credentials (hoặc dùng IAM role) để sử dụng Bedrock Titan Embedding.
+Cung cấp thông tin kết nối PostgreSQL qua các biến PGDATABASE, PGUSER, PGPASSWORD, PGHOST, PGPORT (hoặc dùng giá trị mặc định trong Settings).
+Đảm bảo extension pgvector đã được cài đặt trên instance PostgreSQL/RDS.
+Triển khai Local:
+
+Để phát triển và kiểm thử nhanh, giữ USE_S3=false và USE_BEDROCK_EMBEDDING=false.
+Chạy python scripts/build_index.py để tạo vector store local (sử dụng PostgreSQL local nếu đã cấu hình, hoặc dựa vào VECTOR_STORE_DIR để sử dụng SQLite/FAISS cũ nếu chưa cài PostgreSQL – nhưng lưu ý rằng vector_store.py hiện tại chỉ hoạt động với PostgreSQL; cần giữ bản sao cũ nếu muốn dùng SQLite).
+Triển khai AWS:
+
+Đóng gói lambda_handler.py cùng với các module phụ thuộc (chunking.py, embeddings.py, vector_store.py, config.py) vào một deployment package (có thể dùng Docker hoặc AWS SAM/ CDK).
+Tạo hàm Lambda, cấu hình trigger từ bucket S3, và cấp<IAM> role cho phép truy cập S3, Bedrock, và RDS.
+Khởi tạo một instance Amazon RDS PostgreSQL với extension pgvector và tạo database/user dựa trên env var.
+(Tùy chọn) Đặt lên VPC với private subnet để Lambda có thể truy cập RDS mà không cần public internet; dùng VPC Endpoint cho Bedrock và S3 nếu cần.
+Kiểm thử:
+
+Upload một file văn bản法律 (txt hoặc pdf) vào bucket S3 (hoặc dùng local minstack/mock).
+Xác認 Lambda được kích hoạt, thực hiện chunking, gọi embedding (local hoặc Bedrock), và lưu vào PostgreSQL.
+Truy vấn bằng VectorStore().search("câu hỏi của bạn") để nhận được các chunk liên quan.
+
+23) Để giải quyết triệt để cả 2 vấn đề trên mà không làm ảnh hưởng hay phải sửa đổi bất kỳ file nào khác (pipeline.py hay qa_service.py vẫn giữ nguyên), 
+chúng ta sẽ nâng cấp vector_store.py thành một kiến trúc linh hoạt:  
+Mặc định khi test ở Local (máy cá nhân): Chạy bằng FAISS + SQLite cho tiện lợi và miễn phí.  
+Khi bật biến môi trường USE_PGVECTOR=true (khi lên Cloud): Tự động chuyển hướng lưu trữ và tìm kiếm sang Amazon RDS PostgreSQL (pgvector).

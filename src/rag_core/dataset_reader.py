@@ -1,199 +1,194 @@
 from __future__ import annotations
 
-import gc
-import sqlite3
-import tempfile
-from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
-import fsspec
-import pyarrow.parquet as pq
-from datasets import load_dataset
+import boto3
+from botocore.exceptions import ClientError
 
 from .config import get_settings
-
-
-@dataclass
-class LegalDocument:
-    document_id: str
-    text: str
-    metadata: Dict[str, Any]
 
 
 def _normalize_id(value: Any) -> str:
     return "" if value is None else str(value)
 
 
-def iter_metadata_rows(limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
-    """
-    Đọc metadata theo kiểu streaming để tránh load toàn bộ vào RAM.
-    """
-    settings = get_settings()
-    dataset = load_dataset(
-        settings.hf_dataset_name,
-        settings.hf_metadata_config,
-        streaming=True,
-    )
-    split_name = "data" if "data" in dataset else next(iter(dataset.keys()))
+def _fetch_from_s3(bucket: str, key: str) -> str:
+    """Fetch a single object from S3 and return its text content."""
+    s3 = boto3.client("s3")
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        body = response["Body"]
+        # Try to decode as utf-8, fallback to latin-1
+        try:
+            return body.read().decode("utf-8")
+        except UnicodeDecodeError:
+            return body.read().decode("latin-1")
+    except ClientError as e:
+        # If the object doesn't exist or any other error, skip this file
+        print(f"Warning: Could not fetch s3://{bucket}/{key}: {e}")
+        return ""
 
+
+def _iter_local_files(root_dir: Path, limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
+    """Yield documents from a local directory of .txt and .pdf files."""
     count = 0
-    for row in dataset[split_name]:
-        yield dict(row)
-        count += 1
+    # gather files
+    files = sorted(root_dir.rglob("*.txt")) + sorted(root_dir.rglob("*.pdf"))
+    for file_path in files:
         if limit is not None and count >= limit:
             break
-
-
-def _build_metadata_db(
-    metadata_limit: Optional[int] = None,
-) -> str:
-    """
-    Stream tất cả metadata vào một SQLite tạm thời trên ổ cứng.
-    Trả về đường dẫn file .db để dùng cho tra cứu.
-
-    Giải pháp này chỉ dùng O(1) RAM vì từng row được insert ngay lập tức
-    xuống SQLite, không giữ gì trong Python heap.
-    """
-    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    tmp.close()
-
-    conn = sqlite3.connect(tmp.name)
-    conn.execute("PRAGMA synchronous=OFF;")
-    conn.execute("PRAGMA journal_mode=MEMORY;")
-    conn.execute(
-        """
-        CREATE TABLE meta (
-            id TEXT PRIMARY KEY,
-            payload TEXT NOT NULL
-        )
-        """
-    )
-
-    import json
-
-    batch: list[tuple[str, str]] = []
-    for row in iter_metadata_rows(limit=metadata_limit):
-        doc_id = _normalize_id(row.get("id"))
-        if not doc_id:
+        try:
+            if file_path.suffix.lower() == ".txt":
+                text = file_path.read_text(encoding="utf-8", errors="ignore")
+            else:  # pdf
+                try:
+                    import PyPDF2
+                except Exception:  # pragma: no cover
+                    raise RuntimeError(
+                        "PyPDF2 is required to read PDF files. Install it via `pip install pypdf`."
+                    )
+                pdf_file = file_path.open("rb")
+                reader = PyPDF2.PdfReader(pdf_file)
+                text_parts = []
+                for page in reader.pages:
+                    text_parts.append(page.extract_text() or "")
+                text = "\n".join(text_parts)
+                pdf_file.close()
+        except Exception as e:  # pragma: no cover
+            print(f"Warning: Could not read {file_path}: {e}")
             continue
-        # Strip id from payload to avoid duplicating key
-        payload = {k: v for k, v in row.items() if k != "id"}
-        batch.append((doc_id, json.dumps(payload, ensure_ascii=False)))
-
-        if len(batch) >= 5000:
-            conn.executemany(
-                "INSERT OR REPLACE INTO meta (id, payload) VALUES (?, ?)", batch
-            )
-            batch.clear()
-
-    if batch:
-        conn.executemany(
-            "INSERT OR REPLACE INTO meta (id, payload) VALUES (?, ?)", batch
-        )
-
-    conn.commit()
-    conn.close()
-    return tmp.name
-
-
-def iter_content_rows(
-    limit: Optional[int] = None,
-    batch_size: int = 64,
-) -> Iterator[Dict[str, Any]]:
-    """
-    Đọc content.parquet theo batch nhỏ, không dùng pandas để giảm RAM.
-    """
-    settings = get_settings()
-
-    with fsspec.open(settings.hf_content_parquet_url, mode="rb") as f:
-        parquet_file = pq.ParquetFile(f)
-
-        yielded = 0
-        for batch in parquet_file.iter_batches(
-            batch_size=batch_size,
-            columns=["id", "content"],
-        ):
-            data = batch.to_pydict()
-            ids = data.get("id", [])
-            contents = data.get("content", [])
-
-            for doc_id, content in zip(ids, contents):
-                yield {"id": doc_id, "content": content}
-                yielded += 1
-                if limit is not None and yielded >= limit:
-                    return
+        if not text.strip():
+            continue
+        doc_id = file_path.stem
+        yield {
+            "document_id": doc_id,
+            "text": text,
+            "metadata": {
+                "source_file": str(file_path.relative_to(root_dir)),
+                "file_size": file_path.stat().st_size,
+                "extension": file_path.suffix.lower(),
+            },
+        }
+        count += 1
 
 
 def iter_documents(
     metadata_limit: Optional[int] = None,
     content_limit: Optional[int] = None,
     content_batch_size: int = 64,
-) -> Iterator[LegalDocument]:
+) -> Iterator[dict]:
     """
-    Đọc documents bằng cách join metadata + content trên ổ cứng.
+    Yield documents as dictionaries with keys:
+        document_id, text, metadata
 
-    Metadata được stream vào một SQLite tạm trước, sau đó content được
-    duyệt và tra metadata tương ứng qua lookup trên SQLite. Phương pháp này
-    tránh hoàn toàn OOM vì không có dict nào giữ toàn bộ dữ liệu trong RAM.
+    This implementation supports three modes:
+      1. S3 mode: if USE_S3 environment variable is set to "true", reads objects from an S3 bucket.
+      2. Local demo mode: if HF_DATASET_NAME is empty and LOCAL_DEMO_PATH is set, reads from that folder.
+      3. HuggingFace mode: otherwise reads the Face dataset) uses snapshot_download of the HF dataset.
+
+    In S3 mode, each object in the bucket (under an optional prefix) is treated as a document.
+    The object key (without extension) is used as the document_id.
+
+    In local demo mode, each .txt or .pdf file under LOCAL_DEMO_PATH is treated as a document.
+    The file stem (without extension) is used as the document_id.
+
+    The `metadata_limit` and `content_limit` arguments are interpreted as limits on the number of
+    documents yielded.
     """
-    import json
+    settings = get_settings()
+    use_s3 = os.getenv("USE_S3", "0").lower() in ("1", "true", "yes", "y")
 
+    if use_s3:
+        bucket = os.getenv("VECTOR_S3_BUCKET")
+        prefix = os.getenv("VECTOR_S3_PREFIX", "").rstrip("/")
+        if not bucket:
+            raise ValueError("VECTOR_S3_BUCKET must be set when USE_S3 is true")
+        s3 = boto3.client("s3")
+        paginator = s3.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
+        count = 0
+        for page in pages:
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                # Skip directories or non-files (if key ends with '/')
+                if key.endswith("/"):
+                    continue
+                # Apply limits
+                if content_limit is not None and count >= content_limit:
+                    return
+                if metadata_limit is not None and count >= metadata_limit:
+                    return
+                text = _fetch_from_s3(bucket, key)
+                if not text.strip():
+                    continue
+                # Use the filename (without extension) as document_id
+                doc_id = Path(key).stem
+                yield {
+                    "document_id": doc_id,
+                    "text": text,
+                    "metadata": {
+                        "s3_bucket": bucket,
+                        "s3_key": key,
+                        "size": obj["Size"],
+                    },
+                }
+                count += 1
+    else:
+        # Not using S3: check if we should use local demo folder or HF dataset
+        hf_name = settings.hf_dataset_name.strip()
+        # local_demo_path = os.getenv("LOCAL_DEMO_PATH")
+        local_demo_path = r"D:/Law-Chatbot/data_demo" 
+        if not hf_name and local_demo_path:
+            # Local demo mode
+            demo_path = Path(local_demo_path)
+            if not demo_path.is_dir():
+                raise ValueError(f"LOCAL_DEMO_PATH '{local_demo_path}' does not exist or is not a directory")
+            # Determine effective limit: prefer content_limit, fallback to metadata_limit
+            effective_limit = None
+            if content_limit is not None:
+                effective_limit = content_limit
+            elif metadata_limit is not None:
+                effective_limit = metadata_limit
+            yield from _iter_local_files(demo_path, limit=effective_limit)
+        else:
+            # HuggingFace mode (default)
+            repo_id = hf_name if hf_name else settings.hf_dataset_name  # fallback to default if empty but not using local demo
+            from huggingface_hub import snapshot_download
 
-    # --- Giai đoạn 1: load metadata vào file SQLite tạm (streaming) ---
-    meta_db_path = _build_metadata_db(metadata_limit=metadata_limit)
-
-    try:
-        meta_conn = sqlite3.connect(meta_db_path)
-        meta_conn.execute("PRAGMA synchronous=OFF;")
-        meta_conn.execute("PRAGMA journal_mode=MEMORY;")
-
-        # --- Giai đoạn 2: duyệt content, lookup metadata từ SQLite ---
-        for content_row in iter_content_rows(
-            limit=content_limit, batch_size=content_batch_size
-        ):
-            doc_id = _normalize_id(content_row.get("id"))
-            content = content_row.get("content", "")
-
-            if not doc_id or not content:
-                continue
-
-            # Lookup metadata
-            row = meta_conn.execute(
-                "SELECT payload FROM meta WHERE id = ?", (doc_id,)
-            ).fetchone()
-            metadata: Dict[str, Any] = json.loads(row[0]) if row else {}
-
-            # Merge any extra fields from content row (excluding id/content)
-            extra = {
-                k: v
-                for k, v in content_row.items()
-                if k not in {"id", "content"}
-            }
-            metadata.update(extra)
-
-            yield LegalDocument(
-                document_id=doc_id,
-                text=str(content),
-                metadata=metadata,
+            local_dir = snapshot_download(
+                repo_id=repo_id,
+                repo_type="dataset",
+                allow_patterns="*.txt",
             )
-
-        meta_conn.close()
-    finally:
-        # --- Giai đoạn 3: dọn dẹp file tạm ---
-        import os
-
-        try:
-            os.unlink(meta_db_path)
-        except OSError:
-            pass
-        gc.collect()
+            local_path = Path(local_dir)
+            txt_files = sorted(local_path.rglob("*.txt"))
+            # Apply limits
+            if content_limit is not None:
+                txt_files = txt_files[:content_limit]
+            if metadata_limit is not None:
+                txt_files = txt_files[:metadata_limit]
+            for file_path in txt_files:
+                try:
+                    text = file_path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    text = file_path.read_text(encoding="latin-1")
+                doc_id = file_path.stem
+                yield {
+                    "document_id": doc_id,
+                    "text": text,
+                    "metadata": {},
+                }
 
 
 def load_documents(
     metadata_limit: Optional[int] = None,
     content_limit: Optional[int] = None,
     content_batch_size: int = 64,
-) -> List[LegalDocument]:
+) -> list[dict]:
+    """Return a list of document dicts (materialises the iterator)."""
     return list(
         iter_documents(
             metadata_limit=metadata_limit,
@@ -203,12 +198,6 @@ def load_documents(
     )
 
 
-def documents_to_dicts(documents: List[LegalDocument]) -> List[Dict[str, Any]]:
-    return [
-        {
-            "document_id": doc.document_id,
-            "text": doc.text,
-            "metadata": doc.metadata,
-        }
-        for doc in documents
-    ]
+def documents_to_dicts(documents: list[dict]) -> list[dict]:
+    """Identity helper kept for compatibility with existing code."""
+    return documents

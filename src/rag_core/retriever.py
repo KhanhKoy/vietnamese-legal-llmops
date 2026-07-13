@@ -35,12 +35,11 @@ class Retriever:
         blocks: List[str] = []
 
         for idx, result in enumerate(results, start=1):
-            chunk = result.get("chunk", {})
             score = result.get("score", 0.0)
 
-            document_id = chunk.get("document_id", "unknown")
-            chunk_id = chunk.get("chunk_id", "unknown")
-            text = chunk.get("text", "")
+            document_id = result.get("document_id", "unknown")
+            chunk_id = result.get("chunk_id", "unknown")
+            text = result.get("text", "")
 
             blocks.append(
                 f"[Nguồn {idx} | score={score:.4f} | doc={document_id} | chunk={chunk_id}]\n{text}"

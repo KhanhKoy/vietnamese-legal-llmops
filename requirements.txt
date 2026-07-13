@@ -6,9 +6,15 @@ python-dotenv
 sentence-transformers
 transformers
 torch
+faiss-cpu>=1.8.0
 fastapi
 uvicorn
 pydantic
 pytest
 requests
 boto3
+pypdf
+pgvector
+psycopg[binary]
+chainlit
+google-genai

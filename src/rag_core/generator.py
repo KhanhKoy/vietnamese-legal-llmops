@@ -2,46 +2,42 @@ from __future__ import annotations
 
 import os
 from typing import Optional
-
-from transformers import pipeline
+from google import genai
+from google.genai import types
+from .config import get_settings
 
 
 class GeneratorService:
     def __init__(
         self,
         model_name: Optional[str] = None,
-        max_new_tokens: int = 256,
-        temperature: float = 0.2,
+        max_new_tokens: int = 1024,
+        temperature: float = 0.0,
     ) -> None:
-        self.model_name = model_name or os.getenv("LLM_MODEL_NAME", "")
-        self.max_new_tokens = max_new_tokens
-        self.temperature = temperature
+        self.settings = get_settings()
 
-        if not self.model_name:
-            self.generator = None
-            return
+        self.model_name = model_name or os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+        self.api_key = os.getenv("GEMINI_API_KEY", "")
 
-        self.generator = pipeline(
-            task="text-generation",
-            model=self.model_name,
-            tokenizer=self.model_name,
+        if not self.api_key:
+            raise ValueError("❌ Không tìm thấy GEMINI_API_KEY trong file .env.")
+
+        self.client = genai.Client(api_key=self.api_key)
+
+        self.generation_config = types.GenerateContentConfig(
+            max_output_tokens=max_new_tokens,
+            temperature=temperature,
         )
 
     def generate(self, prompt: str) -> str:
-        if self.generator is None:
-            raise ValueError(
-                "Chưa cấu hình LLM_MODEL_NAME. Hãy đặt biến môi trường hoặc truyền model_name."
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=self.generation_config,
             )
-
-        output = self.generator(
-            prompt,
-            max_new_tokens=self.max_new_tokens,
-            do_sample=self.temperature > 0,
-            temperature=self.temperature,
-            return_full_text=False,
-        )
-
-        if isinstance(output, list) and output:
-            return str(output[0].get("generated_text", "")).strip()
-
-        return str(output).strip()
+            if response.text:
+                return response.text.strip()
+            return "⚠️ Gemini không thể sinh câu trả lời do vi phạm chính sách nội dung."
+        except Exception as e:
+            return f"❌ Lỗi kết nối Gemini API: {str(e)}"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import gc
 from typing import Any, Dict, Optional
 
-from .chunking import split_text
+from .chunking import chunk_document
 from .dataset_reader import iter_documents
 from .embeddings import EmbeddingService
 from .vector_store import VectorStore
@@ -41,19 +41,11 @@ def build_index_pipeline(
     )
 
     for document in doc_iter:
-        chunk_texts = split_text(document.text)
+        doc_chunks = chunk_document(document)
 
-        for idx, chunk_text in enumerate(chunk_texts):
-            chunk_buffer.append(
-                {
-                    "chunk_id": f"{document.document_id}::chunk_{idx}",
-                    "document_id": document.document_id,
-                    "text": chunk_text,
-                    "chunk_index": idx,
-                    "metadata": document.metadata,
-                }
-            )
-            text_buffer.append(chunk_text)
+        for chunk in doc_chunks:
+            chunk_buffer.append(chunk)
+            text_buffer.append(chunk.text)
 
             if len(text_buffer) >= embedder.batch_size:
                 embeddings = embedder.embed_texts(text_buffer)

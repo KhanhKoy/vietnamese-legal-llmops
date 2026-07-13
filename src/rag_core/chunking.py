@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 from .config import get_settings
 
 
-@dataclass
+@dataclass(frozen=True)
 class Chunk:
     chunk_id: str
     document_id: str
@@ -16,8 +16,10 @@ class Chunk:
     metadata: Dict[str, Any]
 
 
+# Pattern to capture legal heading lines (Chương, Điều, Mục, Khoản) possibly with leading whitespace.
+# Using multiline flag (?m) so ^ matches start of each line.
 _SECTION_SPLIT_PATTERN = re.compile(
-    r"(?m)^(?=\s*(Chương|Điều|Mục|Khoản)\b)"
+    r'(?m)(\s*(?:Chương|Điều|Mục|Khoản)\b[^\n]*)'
 )
 
 
@@ -29,6 +31,7 @@ def _clean_text(text: str) -> str:
 
 
 def _window_chunks(text: str, chunk_size: int, overlap: int) -> List[str]:
+    """Fallback sliding‑window chunker (character based)."""
     if len(text) <= chunk_size:
         return [text]
 
@@ -52,43 +55,70 @@ def _window_chunks(text: str, chunk_size: int, overlap: int) -> List[str]:
 
 def split_text(text: str) -> List[str]:
     """
-    Ưu tiên tách theo heading luật (Chương/Điều/Mục/Khoản).
-    Nếu không hợp lệ thì fallback sang window theo ký tự.
+    Split text into chunks, preferring to cut at legal section headings
+    (Chương, Điều, Mục, Khoản). If no such headings are found, fall back
+    to fixed‑size windowing.
     """
     settings = get_settings()
     text = _clean_text(text)
-
     if not text:
         return []
 
-    parts = [p.strip() for p in _SECTION_SPLIT_PATTERN.split(text) if p.strip()]
+    # Split while keeping the delimiters (the heading lines)
+    parts = _SECTION_SPLIT_PATTERN.split(text)
+    # parts format: [text0, heading1, text1, heading2, text2, ...]
 
-    if len(parts) > 1:
-        # Ghép lại thành các phần nhỏ tương đối theo heading
-        merged: List[str] = []
-        buffer = ""
-        for part in parts:
-            if len(buffer) + len(part) + 2 <= settings.chunk_size_chars:
-                buffer = f"{buffer}\n{part}".strip()
+    chunks: List[str] = []
+    buffer = ""
+
+    for idx, part in enumerate(parts):
+        if idx % 3 == 0:  # plain text segment
+            if not part:
+                continue
+            # Try to add to current buffer respecting size limit
+            if len(buffer) + len(part) <= settings.chunk_size_chars:
+                buffer = (buffer + " " + part).strip() if buffer else part.strip()
             else:
                 if buffer:
-                    merged.append(buffer.strip())
-                buffer = part
-        if buffer:
-            merged.append(buffer.strip())
-        return merged
+                    chunks.append(buffer.strip())
+                # start new buffer with this segment
+                buffer = part.strip()
+        else:
+            # This is a heading line (including possible leading whitespace)
+            heading = part.strip()
+            # If adding heading would exceed limit, start a new chunk with it
+            if len(buffer) + len(heading) + 1 <= settings.chunk_size_chars:
+                # Add a space before heading if there is already content
+                buffer = (
+                    (buffer + " " + heading).strip() if buffer else heading
+                )
+            else:
+                if buffer:
+                    chunks.append(buffer.strip())
+                buffer = heading
 
-    return _window_chunks(
-        text=text,
-        chunk_size=settings.chunk_size_chars,
-        overlap=settings.chunk_overlap_chars,
-    )
+    if buffer:
+        chunks.append(buffer.strip())
+
+    # Any chunk still too large (unlikely but possible) gets windowed
+    final_chunks: List[str] = []
+    for ch in chunks:
+        if len(ch) <= settings.chunk_size_chars:
+            if ch:
+                final_chunks.append(ch)
+        else:
+            sub_chunks = _window_chunks(
+                ch, settings.chunk_size_chars, settings.chunk_overlap_chars
+            )
+            final_chunks.extend([c for c in sub_chunks if c])
+
+    return [c for c in final_chunks if c]
 
 
 def chunk_document(document: Dict[str, Any]) -> List[Chunk]:
     """
-    Chia 1 document thành nhiều chunk.
-    Document input phải có: document_id, text, metadata.
+    Split a single document into chunks.
+    Expected document dict keys: document_id, text, metadata.
     """
     document_id = str(document.get("document_id", ""))
     text = str(document.get("text", ""))
@@ -105,7 +135,6 @@ def chunk_document(document: Dict[str, Any]) -> List[Chunk]:
                 metadata=metadata,
             )
         )
-
     return chunks
 
 

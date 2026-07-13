@@ -15,13 +15,12 @@ def build_context_block(results: List[Dict[str, Any]]) -> str:
     blocks: List[str] = []
 
     for idx, result in enumerate(results, start=1):
-        chunk = result.get("chunk", {})
         score = result.get("score", 0.0)
 
-        document_id = chunk.get("document_id", "unknown")
-        chunk_id = chunk.get("chunk_id", "unknown")
-        text = chunk.get("text", "")
-        metadata = chunk.get("metadata", {})
+        document_id = result.get("document_id", "unknown")
+        chunk_id = result.get("chunk_id", "unknown")
+        text = result.get("text", "")
+        metadata = result.get("metadata", {})
 
         source_name = metadata.get("name") or metadata.get("title") or metadata.get("law_name") or "unknown"
 

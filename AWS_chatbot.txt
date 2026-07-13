@@ -1,0 +1,14 @@
+PHẦN A: LUỒNG NẠP DỮ LIỆU LUẬT (Vẽ bằng màu Xanh Lá Cây để phân biệt)
+[1] Nối từ Admin $\rightarrow$ Amazon S3: Admin tải các file văn bản luật pháp (.pdf/.txt) lên bucket.
+[2] Nối từ Amazon S3 $\rightarrow$ AWS Lambda: S3 kích hoạt sự kiện (Event Trigger) gọi Lambda chạy mỗi khi có file mới.
+[3] Nối mũi tên 2 chiều giữa AWS Lambda $\leftrightarrow$ Amazon Bedrock: Lambda cắt nhỏ văn bản (Chunking) và gửi sang Bedrock lấy Vector mã nhúng (Embedding).
+[4] Nối từ AWS Lambda $\rightarrow$ Amazon RDS (pgvector): Lambda lưu các đoạn văn bản kèm Vector tương ứng vào cơ sở dữ liệu PostgreSQL.
+PHẦN B: LUỒNG NGƯỜI DÙNG CHAT TRUY VẤN RAG (Vẽ bằng màu Xanh Dương)
+[5] Nối từ User $\rightarrow$ ALB (Application Load Balancer): Người dùng truy cập trang web Chatbot gửi câu hỏi.
+[6] Nối từ ALB $\rightarrow$ Amazon EC2 (Chainlit App): ALB điều hướng request một cách an toàn vào ứng dụng Chainlit nằm trong Private Subnet.
+[7] Nối mũi tên 2 chiều giữa Amazon EC2 $\leftrightarrow$ Amazon RDS (pgvector): Ứng dụng nhận câu hỏi, tự động chuyển đổi thành vector qua Bedrock rồi tìm kiếm các đoạn luật có độ tương đồng cao nhất trong RDS Database.
+[8] Nối mũi tên 2 chiều giữa Amazon EC2 $\leftrightarrow$ Amazon Bedrock: EC2 đóng gói câu hỏi + đoạn luật tìm được thành một Prompt, gửi sang Bedrock yêu cầu LLM (Claude 3/Llama 3) sinh câu trả lời chính xác, sau đó stream kết quả về lại giao diện cho User.
+[9] Nối từ Amazon EC2 $\rightarrow$ Amazon DynamoDB: EC2 đồng thời ghi nhận và lưu vết lịch sử đoạn chat của phiên làm việc đó vào DynamoDB.  
+PHẦN C: LUỒNG VẬN HÀNH & GIÁM SÁT (Vẽ bằng màu Đỏ)
+[10] Nối từ Amazon EC2 $\rightarrow$ Amazon CloudWatch: Ứng dụng EC2 liên tục đẩy Log hệ thống và các Metric đo lường hiệu năng lên CloudWatch.  
+[11] Nối từ Amazon CloudWatch $\rightarrow$ Amazon SNS $\rightarrow$ quay ngược lại Admin: Khi CloudWatch Alarm phát hiện lỗi hệ thống hoặc chi phí Bedrock tiêu thụ vượt định mức, nó kích hoạt SNS gửi một email cảnh báo khẩn cấp tới Admin.  
