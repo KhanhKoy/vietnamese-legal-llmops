@@ -153,35 +153,74 @@ def iter_documents(
             elif metadata_limit is not None:
                 effective_limit = metadata_limit
             yield from _iter_local_files(demo_path, limit=effective_limit)
+            
         else:
-            # HuggingFace mode (default)
-            repo_id = hf_name if hf_name else settings.hf_dataset_name  # fallback to default if empty but not using local demo
-            from huggingface_hub import snapshot_download
+            # ĐÃ SỬA: Tải file về local và dùng pyarrow đọc theo cụm nhỏ để CHỐNG TRÀN RAM (5.7GB)
+            repo_id = hf_name if hf_name else "th1nhng0/vietnamese-legal-documents"
+            print(f"🚀 Đang tải/Kiểm tra file Parquet từ HuggingFace về ổ đĩa: {repo_id}...")
+            
+            from huggingface_hub import hf_hub_download
+            import pyarrow.parquet as pq
 
-            local_dir = snapshot_download(
-                repo_id=repo_id,
-                repo_type="dataset",
-                allow_patterns="*.txt",
-            )
-            local_path = Path(local_dir)
-            txt_files = sorted(local_path.rglob("*.txt"))
-            # Apply limits
+            try:
+                # Tải file về ổ đĩa cache cục bộ (Chỉ tải lần đầu, lần sau chạy sẽ tự động lấy từ ổ cứng cực nhanh)
+                local_file_path = hf_hub_download(
+                    repo_id=repo_id,
+                    repo_type="dataset",
+                    filename="legacy/content.parquet"
+                )
+                print(f"📦 Đã xác định file tại local: {local_file_path}")
+                
+                # Mở file trực tiếp từ ổ đĩa và cấu hình đọc theo cụm nhỏ (batch_size=64)
+                parquet_file = pq.ParquetFile(local_file_path)
+                batch_iterator = parquet_file.iter_batches(batch_size=64, columns=["id", "content"])
+            except Exception as e:
+                raise RuntimeError(
+                    f"❌ Không thể tải hoặc mở file Parquet từ ổ đĩa. Chi tiết lỗi: {e}"
+                )
+
+            # Xác định giới hạn văn bản cần đọc phục vụ test index
+            effective_limit = None
             if content_limit is not None:
-                txt_files = txt_files[:content_limit]
-            if metadata_limit is not None:
-                txt_files = txt_files[:metadata_limit]
-            for file_path in txt_files:
-                try:
-                    text = file_path.read_text(encoding="utf-8")
-                except UnicodeDecodeError:
-                    text = file_path.read_text(encoding="latin-1")
-                doc_id = file_path.stem
-                yield {
-                    "document_id": doc_id,
-                    "text": text,
-                    "metadata": {},
-                }
+                effective_limit = content_limit
+            elif metadata_limit is not None:
+                effective_limit = metadata_limit
 
+            count = 0
+            stop_streaming = False
+
+            # Vòng lặp quét qua từng cụm nhỏ được nạp lên RAM
+            for batch in batch_iterator:
+                if stop_streaming:
+                    break
+                
+                print(f"DEBUG: Đang nạp một batch mới gồm {len(batch)} dòng từ Parquet...")
+                
+                # Chuyển cụm nhỏ này sang Pandas DataFrame để bóc tách dòng
+                df_batch = batch.to_pandas()
+                
+                for _, row in df_batch.iterrows():
+                    if effective_limit is not None and count >= effective_limit:
+                        stop_streaming = True
+                        break
+
+                    doc_id = str(row.get("id", f"hf_doc_{count}"))
+                    text = str(row.get("content", "")).strip()
+
+                    if not text:
+                        continue
+                    print(f"DEBUG: Đang trả về văn bản số {count} (ID: {doc_id})")
+                    yield {
+                        "document_id": doc_id,
+                        "text": text,
+                        "metadata": {
+                            "source": "huggingface",
+                            "dataset": repo_id,
+                            "config": "legacy/content",
+                            "name": f"Văn bản số {doc_id}"
+                        },
+                    }
+                    count += 1
 
 def load_documents(
     metadata_limit: Optional[int] = None,

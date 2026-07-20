@@ -95,7 +95,7 @@ class EmbeddingService:
     def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
         texts_list = [str(t).strip() for t in texts]
         if not texts_list:
-            return np.empty((0, self.dimension), dtype=np.float16)
+            return np.empty((0, self.dimension), dtype=np.float32)
 
         if self.use_bedrock:
             raw_embeds = self._embed_via_bedrock(list(texts_list))
@@ -106,13 +106,13 @@ class EmbeddingService:
         # Ensure dimension known
         if self._dim is None:
             self._dim = arr.shape[1]
-        # Convert to float16 to match original storage format
-        return np.asarray(arr, dtype=np.float16)
+        # Convert to float32 to match original storage format
+        return np.asarray(arr, dtype=np.float32)
 
     def embed_query(self, query: str) -> np.ndarray:
         query = (query or "").strip()
         if not query:
-            return np.zeros(self.dimension, dtype=np.float16)
+            return np.zeros(self.dimension, dtype=np.float32)
 
         if self.use_bedrock:
             raw = self._embed_via_bedrock([query])[0]
@@ -128,7 +128,7 @@ class EmbeddingService:
 
         if self._dim is None:
             self._dim = len(vec)
-        return np.asarray(vec, dtype=np.float16)
+        return np.asarray(vec, dtype=np.float32)
 
     @property
     def dimension(self) -> int:

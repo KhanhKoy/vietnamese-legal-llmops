@@ -2,6 +2,7 @@ datasets
 fsspec
 pyarrow
 numpy
+pandas
 python-dotenv
 sentence-transformers
 transformers

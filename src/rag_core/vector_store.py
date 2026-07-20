@@ -2,41 +2,46 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+
 from .config import get_settings
 from .embeddings import EmbeddingService
+
+VIETNAMESE_STOPWORDS = {
+    "và", "hoặc", "là", "của", "cho", "với", "một", "những", "các", "theo",
+    "trong", "khi", "nào", "ở", "đâu", "thì", "có", "không", "bị", "được",
+    "phải", "nên", "về", "tại", "từ", "đến", "này", "đó", "kia", "ấy"
+}
+
 
 class VectorStore:
     def __init__(self, storage_dir: Optional[Path] = None) -> None:
         self.settings = get_settings()
-        
-        # Kiểm tra biến môi trường xem có kích hoạt chế độ chạy PostgreSQL trên Cloud không
         self.use_pgvector = os.getenv("USE_PGVECTOR", "0").lower() in ("1", "true", "yes", "y")
         self.embedder = EmbeddingService()
-        
+
         if self.use_pgvector:
-            # --- CHẾ ĐỘ PRODUCTION: AMAZON RDS (POSTGRESQL + PGVECTOR) ---
             import psycopg
             from pgvector.psycopg import register_vector
-            
-            # Kết nối tới database Amazon RDS dựa trên config
+
             self.conn = psycopg.connect(
                 host=self.settings.pg_host,
                 port=self.settings.pg_port,
                 user=self.settings.pg_user,
                 password=self.settings.pg_password,
                 dbname=self.settings.pg_database,
-                autocommit=False
+                autocommit=False,
             )
             register_vector(self.conn)
             self._init_postgres()
         else:
-            # --- CHẾ ĐỘ LOCAL DEV: FAISS + SQLITE3 ---
             import faiss
+
             self.faiss = faiss
             self.storage_dir = Path(storage_dir or self.settings.vector_store_dir)
             self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -47,13 +52,10 @@ class VectorStore:
             self.index: Optional[faiss.Index] = None
             self.embedding_dim: Optional[int] = None
             self.total_vectors: int = 0
-            
+
             self.sqlite_conn = sqlite3.connect(self.meta_path)
             self._init_sqlite()
 
-    # -----------------------------------------------------------------
-    # Khởi tạo bảng dữ liệu
-    # -----------------------------------------------------------------
     def _init_sqlite(self) -> None:
         self.sqlite_conn.execute(
             """
@@ -70,10 +72,8 @@ class VectorStore:
         self.sqlite_conn.commit()
 
     def _init_postgres(self) -> None:
-        # Kích hoạt extension pgvector trong database nếu chưa có
         with self.conn.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-            # Tạo bảng lưu trữ vector luật pháp tích hợp cột vector nhúng (1536 chiều cho Titan Embedding)
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS legal_chunks (
@@ -89,32 +89,138 @@ class VectorStore:
             )
         self.conn.commit()
 
-    # -----------------------------------------------------------------
-    # Các hàm tương tác API chung (Public API)
-    # -----------------------------------------------------------------
+    def _normalize_text(self, text: str) -> str:
+        return re.sub(r"\s+", " ", (text or "").strip())
+
+    def _extract_keywords(self, question: str) -> List[str]:
+        tokens = re.findall(r"[A-Za-zÀ-ỹ0-9_]+", (question or "").lower())
+        keywords = [
+            token for token in tokens
+            if token not in VIETNAMESE_STOPWORDS and len(token) > 1
+        ]
+        seen = set()
+        unique_keywords: List[str] = []
+        for token in keywords:
+            if token not in seen:
+                seen.add(token)
+                unique_keywords.append(token)
+        return unique_keywords
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return default
+
+    def _safe_int(self, value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+    def _doc_fingerprint(self, doc: Dict[str, Any]) -> str:
+        return str(
+            doc.get("document_id")
+            or doc.get("source")
+            or doc.get("id")
+            or doc.get("chunk_id")
+            or doc.get("text", "")[:250]
+        )
+
+    def _normalize_results(self, result: Any) -> List[Dict[str, Any]]:
+        if isinstance(result, dict):
+            items = result.get("results") or result.get("documents") or result.get("data") or []
+            return items if isinstance(items, list) else []
+        if isinstance(result, list):
+            return result
+        return []
+
+    def _build_keyword_like_clauses(self, keywords: List[str], op: str = " AND ") -> Tuple[str, List[Any]]:
+        clauses = []
+        params: List[Any] = []
+
+        for kw in keywords:
+            clauses.append("(LOWER(text) LIKE ? OR LOWER(metadata_json) LIKE ?)")
+            pattern = f"%{kw.lower()}%"
+            params.extend([pattern, pattern])
+
+        return op.join(clauses), params
+
+    def _score_keyword_match(self, text: str, keywords: List[str]) -> float:
+        if not keywords:
+            return 0.0
+
+        normalized = self._normalize_text(text).lower()
+        hits = sum(1 for kw in keywords if kw in normalized)
+        return hits / max(len(keywords), 1)
+
+    def _merge_result_sets(self, result_sets: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        merged: Dict[str, Dict[str, Any]] = {}
+
+        for results in result_sets:
+            for idx, doc in enumerate(results):
+                if not isinstance(doc, dict):
+                    continue
+
+                fp = self._doc_fingerprint(doc)
+                current = merged.get(fp)
+
+                score = self._safe_float(doc.get("score", 0.0))
+                if score <= 0.0:
+                    score = 1.0 / (idx + 1)
+
+                if current is None or score > self._safe_float(current.get("_rank_score", current.get("score", 0.0))):
+                    new_doc = dict(doc)
+                    new_doc["_rank_score"] = score
+                    merged[fp] = new_doc
+
+        return sorted(
+            merged.values(),
+            key=lambda d: self._safe_float(d.get("_rank_score", d.get("score", 0.0))),
+            reverse=True,
+        )
+
+    def _ensure_loaded(self) -> None:
+        if self.use_pgvector:
+            return
+
+        if self.index is None:
+            self.load()
+
     def reset(self) -> None:
         if self.use_pgvector:
             with self.conn.cursor() as cur:
                 cur.execute("TRUNCATE TABLE legal_chunks;")
             self.conn.commit()
-        else:
-            if hasattr(self, "sqlite_conn") and self.sqlite_conn:
-                self.sqlite_conn.close()
-            try:
-                if self.index_path.exists():
-                    self.index_path.unlink()
-            except PermissionError:
-                pass
-            self.index = None
-            self.embedding_dim = None
-            self.total_vectors = 0
-            self.sqlite_conn = sqlite3.connect(self.meta_path)
-            self._init_sqlite()
+            return
+
+        if hasattr(self, "sqlite_conn") and self.sqlite_conn:
+            self.sqlite_conn.close()
+
+        # ĐÃ SỬA: Xóa triệt để file FAISS index
+        try:
+            if self.index_path.exists():
+                self.index_path.unlink()
+        except PermissionError:
+            pass
+
+        # ĐÃ SỬA BỔ SUNG: Xóa triệt để file SQLite meta cũ để tránh lệch dòng id
+        try:
+            if self.meta_path.exists():
+                self.meta_path.unlink()
+        except PermissionError:
+            pass
+
+        self.index = None
+        self.embedding_dim = None
+        self.total_vectors = 0
+        self.sqlite_conn = sqlite3.connect(self.meta_path)
+        self._init_sqlite()
 
     def add(self, chunks: Sequence[Any], embeddings: np.ndarray) -> None:
         if len(chunks) != embeddings.shape[0]:
             raise ValueError("Số lượng chunks và embeddings không khớp nhau.")
-        
+
         chunk_dicts = [self._chunk_to_dict(c) for c in chunks]
         embeddings_f32 = np.asarray(embeddings, dtype=np.float32)
 
@@ -129,38 +235,43 @@ class VectorStore:
                         (
                             str(ch.get("chunk_id", "")),
                             str(ch.get("document_id", "")),
-                            int(ch.get("chunk_index", 0)),
+                            self._safe_int(ch.get("chunk_index", 0)),
                             str(ch.get("text", "")),
                             json.dumps(ch.get("metadata", {}), ensure_ascii=False),
-                            emb.tolist()
-                        )
+                            emb.tolist(),
+                        ),
                     )
-        else:
-            dim = embeddings_f32.shape[1]
-            if self.index is None:
-                if self.index_path.exists():
-                    self.index = self.faiss.read_index(str(self.index_path))
-                    self.embedding_dim = int(self.index.d)
-                else:
-                    self.index = self.faiss.IndexFlatIP(dim)
-                    self.embedding_dim = dim
-            
-            # Ghi metadata vào SQLite
-            cursor = self.sqlite_conn.cursor()
-            for ch in chunk_dicts:
-                cursor.execute(
-                    "INSERT INTO metadata (chunk_id, document_id, chunk_index, text, metadata_json) VALUES (?, ?, ?, ?, ?)",
-                    (
-                        str(ch.get("chunk_id", "")),
-                        str(ch.get("document_id", "")),
-                        int(ch.get("chunk_index", 0)),
-                        str(ch.get("text", "")),
-                        json.dumps(ch.get("metadata", {}), ensure_ascii=False),
-                    )
-                )
-            self.sqlite_conn.commit()
-            self.index.add(embeddings_f32)
-            self.total_vectors += len(chunks)
+            self.conn.commit()
+            return
+
+        dim = embeddings_f32.shape[1]
+        if self.index is None:
+            if self.index_path.exists():
+                self.index = self.faiss.read_index(str(self.index_path))
+                self.embedding_dim = int(self.index.d)
+            else:
+                self.index = self.faiss.IndexFlatIP(dim)
+                self.embedding_dim = dim
+
+        cursor = self.sqlite_conn.cursor()
+        for ch in chunk_dicts:
+            cursor.execute(
+                """
+                INSERT INTO metadata (chunk_id, document_id, chunk_index, text, metadata_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(ch.get("chunk_id", "")),
+                    str(ch.get("document_id", "")),
+                    self._safe_int(ch.get("chunk_index", 0)),
+                    str(ch.get("text", "")),
+                    json.dumps(ch.get("metadata", {}), ensure_ascii=False),
+                ),
+            )
+        self.sqlite_conn.commit()
+
+        self.index.add(embeddings_f32)
+        self.total_vectors += len(chunks)
 
     def commit(self) -> None:
         if self.use_pgvector:
@@ -171,22 +282,19 @@ class VectorStore:
     def save(self) -> None:
         if self.use_pgvector:
             self.conn.commit()
-        else:
-            if self.index is not None:
-                self.faiss.write_index(self.index, str(self.index_path))
+        elif self.index is not None:
+            self.faiss.write_index(self.index, str(self.index_path))
 
     def load(self) -> None:
-        if not self.use_pgvector:
-            if self.index_path.exists():
-                self.index = self.faiss.read_index(str(self.index_path))
-                self.total_vectors = self.index.ntotal
-                self.embedding_dim = int(self.index.d)
+        if self.use_pgvector:
+            return
 
-    # -----------------------------------------------------------------
-    # Hàm giải quyết bài toán crash code trên Lambda
-    # -----------------------------------------------------------------
+        if self.index_path.exists():
+            self.index = self.faiss.read_index(str(self.index_path))
+            self.total_vectors = self.index.ntotal
+            self.embedding_dim = int(self.index.d)
+
     def close(self) -> None:
-        """Đóng an toàn mọi kết nối cơ sở dữ liệu để giải phóng tài nguyên mạng."""
         if self.use_pgvector and hasattr(self, "conn") and self.conn:
             try:
                 self.conn.commit()
@@ -199,65 +307,270 @@ class VectorStore:
             except Exception:
                 pass
 
-    # -----------------------------------------------------------------
-    # Tìm kiếm dữ liệu tương đồng (Search)
-    # -----------------------------------------------------------------
-    def search(self, query: str, embedder: Optional[EmbeddingService] = None, top_k: int = 5) -> List[Dict[str, Any]]:
-        emb_service = embedder or self.embedder
-        q_emb = emb_service.embed_query(query)
+    def _search_pgvector(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+        q_emb = self.embedder.embed_query(query)
         q_emb_f32 = np.asarray(q_emb, dtype=np.float32)
 
         results: List[Dict[str, Any]] = []
-
-        if self.use_pgvector:
-            # Thực hiện truy vấn khoảng cách Vector Cosine (<=>) trên PostgreSQL RDS
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT chunk_id, document_id, chunk_index, text, metadata_json, (embedding <=> %s) as distance
-                    FROM legal_chunks
-                    ORDER BY distance ASC
-                    LIMIT %s;
-                    """,
-                    (q_emb_f32.tolist(), top_k)
-                )
-                rows = cur.fetchall()
-                for row in rows:
-                    results.append({
-                        "chunk_id": row[0],
-                        "document_id": row[1],
-                        "chunk_index": row[2],
-                        "text": row[3],
-                        "metadata": json.loads(row[4]) if isinstance(row[4], str) else row[4],
-                        "score": float(1 - row[5])  # Chuyển đổi khoảng cách thành điểm số tương đồng
-                    })
-        else:
-            if self.index is None:
-                self.load()
-            if self.index is None:
-                raise RuntimeError("Hệ thống Vector Index trống – Hãy nạp dữ liệu trước.")
-            
-            q_reshaped = q_emb_f32.reshape(1, -1)
-            D, I = self.index.search(q_reshaped, top_k)
-            ids = (I[0] + 1).tolist()
-            placeholders = ",".join("?" for _ in ids)
-
-            cursor = self.sqlite_conn.cursor()
-            cursor.execute(
-                f"SELECT chunk_id, document_id, chunk_index, text, metadata_json FROM metadata WHERE id IN ({placeholders})",
-                ids
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT chunk_id, document_id, chunk_index, text, metadata_json, (embedding <=> %s) as distance
+                FROM legal_chunks
+                ORDER BY distance ASC
+                LIMIT %s;
+                """,
+                (q_emb_f32.tolist(), top_k),
             )
-            rows = cursor.fetchall()
-            for (chunk_id, document_id, chunk_index, text, metadata_json), score in zip(rows, D[0]):
-                results.append({
+            rows = cur.fetchall()
+
+        for row in rows:
+            metadata = row[4]
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except Exception:
+                    metadata = {}
+            results.append(
+                {
+                    "chunk_id": row[0],
+                    "document_id": row[1],
+                    "chunk_index": row[2],
+                    "text": row[3],
+                    "metadata": metadata,
+                    "score": float(1 - row[5]),
+                }
+            )
+
+        return results
+
+    def _search_faiss(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+        q_emb = self.embedder.embed_query(query)
+        q_emb_f32 = np.asarray(q_emb, dtype=np.float32)
+
+        if self.index is None:
+            self.load()
+        if self.index is None:
+            raise RuntimeError("Hệ thống Vector Index trống – Hãy nạp dữ liệu trước.")
+
+        q_reshaped = q_emb_f32.reshape(1, -1)
+        D, I = self.index.search(q_reshaped, top_k)
+
+        row_ids = [self._safe_int(i) + 1 for i in I[0].tolist() if self._safe_int(i) >= 0]
+        if not row_ids:
+            return []
+
+        placeholders = ",".join("?" for _ in row_ids)
+        order_case = " ".join([f"WHEN id = ? THEN {idx}" for idx, _ in enumerate(row_ids)])
+
+        cursor = self.sqlite_conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT id, chunk_id, document_id, chunk_index, text, metadata_json
+            FROM metadata
+            WHERE id IN ({placeholders})
+            ORDER BY CASE {order_case} ELSE {len(row_ids)} END
+            """,
+            row_ids + row_ids,
+        )
+        rows = cursor.fetchall()
+
+        row_map: Dict[int, Tuple[Any, ...]] = {int(row[0]): row for row in rows}
+
+        results: List[Dict[str, Any]] = []
+        for rank, row_id in enumerate(row_ids):
+            row = row_map.get(row_id)
+            if row is None:
+                continue
+
+            _, chunk_id, document_id, chunk_index, text, metadata_json = row
+            metadata = {}
+            try:
+                metadata = json.loads(metadata_json)
+            except Exception:
+                metadata = {}
+
+            score = float(D[0][rank]) if rank < len(D[0]) else 0.0
+            results.append(
+                {
                     "chunk_id": chunk_id,
                     "document_id": document_id,
                     "chunk_index": chunk_index,
                     "text": text,
-                    "metadata": json.loads(metadata_json),
-                    "score": float(score)
-                })
+                    "metadata": metadata,
+                    "score": score,
+                }
+            )
+
         return results
+
+    def search(self, query: str, embedder: Optional[EmbeddingService] = None, top_k: int = 5) -> List[Dict[str, Any]]:
+        if embedder is not None:
+            self.embedder = embedder
+
+        self._ensure_loaded()
+        if self.use_pgvector:
+            return self._search_pgvector(query, top_k)
+        return self._search_faiss(query, top_k)
+
+    def keyword_search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        keywords = self._extract_keywords(query)
+        if not keywords:
+            return []
+
+        results: List[Dict[str, Any]] = []
+
+        def run_sqlite(use_and: bool) -> List[Dict[str, Any]]:
+            where_op = " AND " if use_and else " OR "
+            where_clause, params = self._build_keyword_like_clauses(keywords, op=where_op)
+            if not where_clause:
+                return []
+
+            cursor = self.sqlite_conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT id, chunk_id, document_id, chunk_index, text, metadata_json
+                FROM metadata
+                WHERE {where_clause}
+                LIMIT ?
+                """,
+                params + [top_k * 3],
+            )
+            rows = cursor.fetchall()
+
+            items: List[Dict[str, Any]] = []
+            for row in rows:
+                metadata = {}
+                try:
+                    metadata = json.loads(row[5])
+                except Exception:
+                    metadata = {}
+                score = self._score_keyword_match(str(row[4]), keywords)
+                items.append(
+                    {
+                        "chunk_id": row[1],
+                        "document_id": row[2],
+                        "chunk_index": row[3],
+                        "text": row[4],
+                        "metadata": metadata,
+                        "score": score,
+                    }
+                )
+            return items
+
+        def run_pg(use_and: bool) -> List[Dict[str, Any]]:
+            clauses = []
+            params: List[Any] = []
+            joiner = " AND " if use_and else " OR "
+            for kw in keywords:
+                clauses.append("(LOWER(text) LIKE %s OR LOWER(CAST(metadata_json AS TEXT)) LIKE %s)")
+                pattern = f"%{kw.lower()}%"
+                params.extend([pattern, pattern])
+
+            sql = f"""
+                SELECT chunk_id, document_id, chunk_index, text, metadata_json
+                FROM legal_chunks
+                WHERE {joiner.join(clauses)}
+                LIMIT %s;
+            """
+            params.append(top_k * 3)
+
+            with self.conn.cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+
+            items: List[Dict[str, Any]] = []
+            for row in rows:
+                metadata = row[4]
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except Exception:
+                        metadata = {}
+                score = self._score_keyword_match(str(row[3]), keywords)
+                items.append(
+                    {
+                        "chunk_id": row[0],
+                        "document_id": row[1],
+                        "chunk_index": row[2],
+                        "text": row[3],
+                        "metadata": metadata,
+                        "score": score,
+                    }
+                )
+            return items
+
+        # 1) thử khớp chặt
+        results = run_pg(True) if self.use_pgvector else run_sqlite(True)
+
+        # 2) nếu rỗng thì nới lỏng bằng OR
+        if not results and len(keywords) > 1:
+            results = run_pg(False) if self.use_pgvector else run_sqlite(False)
+
+        results.sort(key=lambda d: self._safe_float(d.get("score", 0.0)), reverse=True)
+        return results[:top_k]
+
+    def hybrid_search(
+        self,
+        query: str,
+        embedder: Optional[EmbeddingService] = None,
+        top_k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        if embedder is not None:
+            self.embedder = embedder
+
+        vector_results = self.search(query=query, top_k=max(top_k * 2, top_k))
+        keyword_results = self.keyword_search(query=query, top_k=max(top_k * 2, top_k))
+
+        merged: Dict[str, Dict[str, Any]] = {}
+
+        for idx, doc in enumerate(vector_results):
+            if not isinstance(doc, dict):
+                continue
+            fp = self._doc_fingerprint(doc)
+            new_doc = dict(doc)
+            base_score = self._safe_float(new_doc.get("score", 0.0))
+            new_doc["_rank_score"] = base_score * 0.7 + (1.0 / (idx + 1)) * 0.3
+            merged[fp] = new_doc
+
+        for idx, doc in enumerate(keyword_results):
+            if not isinstance(doc, dict):
+                continue
+            fp = self._doc_fingerprint(doc)
+            kw_score = self._safe_float(doc.get("score", 0.0))
+            boost = kw_score * 0.8 + (1.0 / (idx + 1)) * 0.2
+
+            current = merged.get(fp)
+            if current is None or boost > self._safe_float(current.get("_rank_score", current.get("score", 0.0))):
+                new_doc = dict(doc)
+                new_doc["_rank_score"] = boost
+                merged[fp] = new_doc
+
+        final_results = sorted(
+            merged.values(),
+            key=lambda d: self._safe_float(d.get("_rank_score", d.get("score", 0.0))),
+            reverse=True,
+        )
+
+        return final_results[:top_k]
+
+    def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        return self.hybrid_search(query=query, top_k=top_k)
+
+    def query(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        return self.hybrid_search(query=query, top_k=top_k)
+
+    def _format_context(self, results: List[Dict[str, Any]]) -> str:
+        blocks: List[str] = []
+        for idx, result in enumerate(results, start=1):
+            score = self._safe_float(result.get("score", result.get("_rank_score", 0.0)))
+            doc_id = result.get("document_id", "unknown")
+            chunk_id = result.get("chunk_id", "unknown")
+            text = str(result.get("text", "")).strip()
+            blocks.append(
+                f"[Nguồn {idx} | score={score:.4f} | doc={doc_id} | chunk={chunk_id}]\n{text}"
+            )
+        return "\n\n---\n\n".join(blocks)
 
     @property
     def chunk_count(self) -> int:
@@ -266,16 +579,12 @@ class VectorStore:
                 with self.conn.cursor() as cur:
                     cur.execute("SELECT COUNT(*) FROM legal_chunks;")
                     row = cur.fetchone()
-                    # Kiểm tra xem cursor có thực sự trả về hàng dữ liệu nào không
-                    if row is not None:
-                        return int(row[0])
-                    return 0
+                    return self._safe_int(row[0], 0) if row else 0
             except Exception as e:
-                # Trả về 0 nếu có bất kỳ lỗi kết nối hoặc truy vấn nào phát sinh
                 print(f"Warning: Không thể lấy số lượng chunk từ Postgres ({e})")
                 return 0
-        else:
-            return self.index.ntotal if self.index is not None else self.total_vectors
+        return self._safe_int(self.index.ntotal, self.total_vectors) if self.index is not None else self.total_vectors
+
     @staticmethod
     def _chunk_to_dict(chunk: Any) -> Dict[str, Any]:
         if isinstance(chunk, dict):

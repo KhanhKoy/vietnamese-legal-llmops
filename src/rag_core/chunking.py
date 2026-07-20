@@ -64,56 +64,53 @@ def split_text(text: str) -> List[str]:
     if not text:
         return []
 
-    # Split while keeping the delimiters (the heading lines)
+    # Tách văn bản theo các mốc cấu trúc luật
     parts = _SECTION_SPLIT_PATTERN.split(text)
-    # parts format: [text0, heading1, text1, heading2, text2, ...]
-
+    
     chunks: List[str] = []
-    buffer = ""
+    # parts[0] là phần văn bản nằm trước tiêu đề đầu tiên (nếu có)
+    buffer = parts[0].strip() if parts[0] else ""
 
-    for idx, part in enumerate(parts):
-        if idx % 3 == 0:  # plain text segment
-            if not part:
-                continue
-            # Try to add to current buffer respecting size limit
-            if len(buffer) + len(part) <= settings.chunk_size_chars:
-                buffer = (buffer + " " + part).strip() if buffer else part.strip()
-            else:
-                if buffer:
-                    chunks.append(buffer.strip())
-                # start new buffer with this segment
-                buffer = part.strip()
+    # Duyệt theo cặp luân phiên: parts[i] là Tiêu đề, parts[i+1] là Nội dung
+    for i in range(1, len(parts), 2):
+        heading = parts[i].strip()
+        body = parts[i+1].strip() if (i + 1) < len(parts) else ""
+        
+        # Buộc chặt Tiêu đề luật và Nội dung của điều đó lại với nhau
+        section = f"{heading}\n{body}".strip() if body else heading
+        if not section:
+            continue
+            
+        if not buffer:
+            buffer = section
+            continue
+            
+        # Kiểm tra xem nếu gộp thêm đoạn luật mới này có bị tràn dung lượng không
+        if len(buffer) + len(section) + 2 <= settings.chunk_size_chars:
+            buffer = buffer + "\n\n" + section
         else:
-            # This is a heading line (including possible leading whitespace)
-            heading = part.strip()
-            # If adding heading would exceed limit, start a new chunk with it
-            if len(buffer) + len(heading) + 1 <= settings.chunk_size_chars:
-                # Add a space before heading if there is already content
-                buffer = (
-                    (buffer + " " + heading).strip() if buffer else heading
-                )
-            else:
-                if buffer:
-                    chunks.append(buffer.strip())
-                buffer = heading
+            # Nếu tràn, đóng gói chunk cũ lại và khởi tạo túi mới bằng chính đoạn luật này
+            chunks.append(buffer)
+            buffer = section
 
     if buffer:
-        chunks.append(buffer.strip())
+        chunks.append(buffer)
 
-    # Any chunk still too large (unlikely but possible) gets windowed
+    # Phòng hờ trường hợp có Điều luật quá dài vượt ngưỡng size limit thì dùng cửa sổ trượt
     final_chunks: List[str] = []
     for ch in chunks:
+        ch = ch.strip()
+        if not ch:
+            continue
         if len(ch) <= settings.chunk_size_chars:
-            if ch:
-                final_chunks.append(ch)
+            final_chunks.append(ch)
         else:
             sub_chunks = _window_chunks(
                 ch, settings.chunk_size_chars, settings.chunk_overlap_chars
             )
-            final_chunks.extend([c for c in sub_chunks if c])
+            final_chunks.extend([c.strip() for c in sub_chunks if c.strip()])
 
-    return [c for c in final_chunks if c]
-
+    return final_chunks
 
 def chunk_document(document: Dict[str, Any]) -> List[Chunk]:
     """
