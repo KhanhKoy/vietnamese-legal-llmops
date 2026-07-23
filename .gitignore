@@ -50,6 +50,9 @@ pip-delete-this-directory.txt
 # # Logs
 # *.log
 
+# Generated vector store artefacts
+models/vector_store/
+
 # # SQLite database files (if stored locally)
 # *.sqlite3
 # *.db
