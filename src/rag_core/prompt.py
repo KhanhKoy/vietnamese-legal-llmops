@@ -3,33 +3,40 @@ from __future__ import annotations
 from typing import List, Dict, Any
 
 
-SYSTEM_PROMPT = """Bạn là trợ lý hỏi đáp pháp luật tiếng Việt.
-Chỉ trả lời dựa trên ngữ cảnh được cung cấp.
-Nếu ngữ cảnh không đủ để kết luận, hãy nói rõ là chưa đủ căn cứ.
-Không bịa đặt điều luật, số điều, số khoản.
-Trả lời ngắn gọn, rõ ràng, có trích dẫn nguồn nếu có thể.
-Nêu rõ đây không phải là tư vấn pháp lý chính thức."""
+SYSTEM_PROMPT = """Bạn là trợ lý tư vấn pháp luật Việt Nam chuyên nghiệp và chính xác.
+Nhiệm vụ của bạn là trả lời câu hỏi dựa TRỰC TIẾP và DUY NHẤT vào Ngữ cảnh văn bản pháp luật được cung cấp dưới đây.
+
+Quy tắc bắt buộc:
+1. Đọc kỹ tất cả các đoạn trích trong Ngữ cảnh để tổng hợp câu trả lời ĐẦY ĐỦ, CHI TIẾT và RÕ RÀNG nhất.
+2. Trích dẫn rõ nguồn pháp lý khi trả lời (Tên văn bản, Số ký hiệu, Điều/Khoản nếu có trong đoạn trích).
+3. Tuyệt đối KHÔNG tự bịa đặt thêm điều luật, số hiệu văn bản hoặc kiến thức bên ngoài Ngữ cảnh.
+4. Nếu trong Ngữ cảnh HOÀN TOÀN KHÔNG CHỨA THÔNG TIN để trả lời câu hỏi, bạn BẮT BUỘC phải trả lời chính xác câu sau:
+   "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
+5. Nêu rõ ở cuối câu trả lời: "Lưu ý: Thông tin chỉ mang tính chất tham khảo, không phải là tư vấn pháp lý chính thức."
+"""
 
 
 def build_context_block(results: List[Dict[str, Any]]) -> str:
+    if not results:
+        return ""
+
     blocks: List[str] = []
 
     for idx, result in enumerate(results, start=1):
         score = result.get("score", 0.0)
-
-        document_id = result.get("document_id", "unknown")
-        chunk_id = result.get("chunk_id", "unknown")
-        text = result.get("text", "")
+        doc_id = result.get("document_id", "N/A")
+        text = str(result.get("text", "")).strip()
         metadata = result.get("metadata", {})
 
-        source_name = metadata.get("name") or metadata.get("title") or metadata.get("law_name") or "unknown"
+        title = metadata.get("title", "Không rõ tiêu đề")
+        so_ky_hieu = metadata.get("so_ky_hieu", "N/A")
+        loai_vb = metadata.get("loai_van_ban", "N/A")
+        co_quan = metadata.get("co_quan_ban_hanh", "N/A")
+
+        header_info = f"[Nguồn {idx}] Văn bản: {title} | Số hiệu: {so_ky_hieu} | Loại: {loai_vb} | Cơ quan: {co_quan} (Score: {score:.4f})"
 
         blocks.append(
-            f"[Nguồn {idx}] score={score:.4f}\n"
-            f"document_id={document_id}\n"
-            f"chunk_id={chunk_id}\n"
-            f"source={source_name}\n"
-            f"text:\n{text}"
+            f"=== {header_info} ===\n{text}"
         )
 
     return "\n\n---\n\n".join(blocks)
@@ -38,16 +45,17 @@ def build_context_block(results: List[Dict[str, Any]]) -> str:
 def build_prompt(question: str, results: List[Dict[str, Any]]) -> str:
     context = build_context_block(results)
 
+    if not context.strip():
+        context_str = "KHÔNG TÌM THẤY BẤT KỲ NGỮ CẢNH NÀO TRONG CƠ SỞ DỮ LIỆU."
+    else:
+        context_str = context
+
     return f"""{SYSTEM_PROMPT}
 
-Ngữ cảnh:
-{context if context else "Không có ngữ cảnh phù hợp."}
+NGỮ CẢNH PHÁP LÝ ĐƯỢC CUNG CẤP:
+{context_str}
 
-Câu hỏi:
+CÂU HỎI CỦA NGƯỜI DÙNG:
 {question}
 
-Yêu cầu:
-- Trả lời bằng tiếng Việt.
-- Nếu thiếu căn cứ, hãy nói "Chưa đủ thông tin để kết luận".
-- Nếu có thể, nêu nguồn trích dẫn.
-"""
+CÂU TRẢ LỜI:"""

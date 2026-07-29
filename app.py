@@ -1,161 +1,50 @@
+from __future__ import annotations
+
+import asyncio
 import inspect
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any
 
 import chainlit as cl
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+# Thêm thư mục src vào sys.path để import các module RAG
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_PATH = PROJECT_ROOT / "src"
+if str(SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(SRC_PATH))
 
+from rag_core.document_manager import DocumentManager
 from rag_core.qa_service import QAService
 
-
-DEFAULT_TOP_K = int(os.getenv("QA_TOP_K", "10"))
-MAX_QUERY_VARIANTS = int(os.getenv("QA_MAX_QUERY_VARIANTS", "4"))
-MIN_ACCEPTABLE_SCORE = float(os.getenv("QA_MIN_ACCEPTABLE_SCORE", "0.25"))
-
-VIETNAMESE_STOPWORDS = {
-    "và", "hoặc", "là", "của", "cho", "với", "một", "những", "các", "theo",
-    "trong", "khi", "nào", "ở", "đâu", "thì", "có", "không", "bị", "được",
-    "phải", "nên", "về", "tại", "từ", "đến", "này", "đó", "kia", "ấy"
-}
+# Lấy tham số cấu hình từ môi trường
+DEFAULT_TOP_K = int(os.getenv("QA_TOP_K", "5"))
 
 
-def normalize_question(question: str) -> str:
-    return re.sub(r"\s+", " ", (question or "").strip())
-
-
-def extract_keywords(question: str) -> list[str]:
-    tokens = re.findall(r"[A-Za-zÀ-ỹ0-9_]+", (question or "").lower())
-    keywords = [
-        token for token in tokens
-        if token not in VIETNAMESE_STOPWORDS and len(token) > 1
-    ]
-    seen = set()
-    unique_keywords = []
-    for token in keywords:
-        if token not in seen:
-            seen.add(token)
-            unique_keywords.append(token)
-    return unique_keywords
-
-
-def build_query_variants(question: str) -> list[str]:
-    q = normalize_question(question)
-    keywords = extract_keywords(q)
-
-    variants = [q]
-    if keywords:
-        variants.append(" ".join(keywords[:12]))
-
-    legal_boosters = [
-        "điều khoản pháp luật",
-        "quy định pháp luật",
-        "căn cứ pháp lý",
-        "nghị định thông tư luật",
-    ]
-
-    if any(term in q.lower() for term in ["điều", "khoản", "mục", "chương", "luật", "nghị định", "thông tư"]):
-        variants.append(f"{q} {' '.join(legal_boosters)}")
-
-    deduped = []
-    seen = set()
-    for item in variants:
-        item = normalize_question(item)
-        if item and item not in seen:
-            seen.add(item)
-            deduped.append(item)
-
-    return deduped[:MAX_QUERY_VARIANTS]
-
-
-def safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
-def doc_fingerprint(doc: dict) -> str:
-    return str(
-        doc.get("document_id")
-        or doc.get("source")
-        or doc.get("id")
-        or doc.get("chunk_id")
-        or doc.get("text", "")[:250]
-    )
-
-
-def merge_results(responses: list[dict]) -> list[dict]:
-    merged: dict[str, dict] = {}
-
-    for resp in responses:
-        for doc in resp.get("results", []) or []:
-            if not isinstance(doc, dict):
-                continue
-
-            fp = doc_fingerprint(doc)
-            current = merged.get(fp)
-
-            score = safe_float(doc.get("score", 0.0))
-            if score <= 0.0:
-                score = 1.0
-
-            if current is None or score > safe_float(current.get("score", 0.0)):
-                new_doc = dict(doc)
-                new_doc["score"] = score
-                merged[fp] = new_doc
-
-    return sorted(merged.values(), key=lambda d: safe_float(d.get("score", 0.0)), reverse=True)
-
-
-async def call_qa_service(qa_service: QAService, question: str):
-    ask_fn = qa_service.ask
-    signature = inspect.signature(ask_fn)
-    params = signature.parameters
-
-    kwargs: dict[str, Any] = {"question": question}
-
-    for name in ("top_k", "k", "limit", "num_results"):
-        if name in params:
-            kwargs[name] = DEFAULT_TOP_K
-            break
-
-    if "rerank" in params:
-        kwargs["rerank"] = True
-
-    result = ask_fn(**kwargs)
-    if inspect.isawaitable(result):
-        return await result
-    return result
-
-
-# Authentication callback
+# Callback xác thực tài khoản (Dùng test nhanh)
 @cl.password_auth_callback
 async def auth_callback(username: str, password: str):
-    # For demo, use hardcoded credentials. In production, validate against a database.
     if username == "admin" and password == "admin":
         return cl.User(
             identifier=username,
             metadata={"role": "admin", "provider": "credentials"},
         )
-    # Optionally, allow any user with a placeholder (not recommended for production)
-    # return cl.User(identifier=username, metadata={"role": "user", "provider": "credentials"})
     return None
 
 
 @cl.on_chat_start
 async def start_chatbot():
     try:
+        # Khởi tạo QAService một lần duy nhất khi bắt đầu phiên chat
         qa_service = QAService()
         cl.user_session.set("qa_service", qa_service)
 
         await cl.Message(
             content=(
-                "⚖️ **Xin chào! Tôi là Trợ lý AI tra cứu Luật pháp Việt Nam.**\n\n"
-                "Bạn muốn tra cứu vấn đề gì?"
+                "⚖️ **Xin chào! Tôi là Trợ lý AI Tra cứu Pháp luật Việt Nam.**\n\n"
+                "Hệ thống đã kết nối thành công với Cơ sở dữ liệu **AWS RDS (pgvector)**.\n"
+                "Bạn muốn tra cứu hoặc đặt câu hỏi về quy định pháp luật nào?"
             )
         ).send()
     except Exception as e:
@@ -164,57 +53,59 @@ async def start_chatbot():
 
 @cl.on_message
 async def handle_user_message(message: cl.Message):
-    qa_service = cl.user_session.get("qa_service")
+    qa_service: QAService = cl.user_session.get("qa_service")  # type: ignore
 
     if qa_service is None:
         await cl.Message(content="❌ Phiên làm việc chưa khởi tạo QAService. Vui lòng tải lại trang.").send()
         return
 
-    loading_msg = cl.Message(content="🔍 *Đang truy lục các điều luật liên quan...*")
+    question = message.content.strip()
+    if not question:
+        return
+
+    loading_msg = cl.Message(content="🔍 *Đang tối ưu hóa truy vấn & tra cứu văn bản pháp luật trên AWS RDS...*")
     await loading_msg.send()
 
     try:
-        question = normalize_question(message.content)
-        query_variants = build_query_variants(question)
-
-        responses = []
-        for variant in query_variants:
-            resp = await call_qa_service(qa_service, variant)
-            if isinstance(resp, dict):
-                responses.append(resp)
-
-        if not responses:
-            loading_msg.content = "⚠️ Tôi chưa truy hồi được kết quả phù hợp."
-            await loading_msg.update()
-            return
-
-        merged_results = merge_results(responses)
-        best = max(
-            responses,
-            key=lambda resp: (
-                max((safe_float(d.get("score", 0.0)) for d in resp.get("results", []) or []), default=0.0),
-                len(resp.get("results", []) or []),
-                len(str(resp.get("answer", "")).strip()),
-            ),
-            default={"answer": "", "results": []},
+        # 🌟 ĐIỂM SỬA MẤU CHỐT: Đưa qa_service.ask vào Thread riêng
+        # Giúp Event Loop của Chainlit không bị block bởi truy vấn SQL & Gemini API
+        response = await qa_service.ask(
+            
+            question=question,
+            top_k=DEFAULT_TOP_K,
         )
 
-        answer = str(best.get("answer", "")).strip()
-        if not answer:
-            answer = "Tôi chưa thể tổng hợp câu trả lời chắc chắn từ dữ liệu hiện có."
+        answer = str(response.get("answer", "")).strip()
+        results = response.get("results", []) or []
 
+        if not answer:
+            answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
+
+        # 1. Cập nhật câu trả lời tổng hợp từ LLM
         loading_msg.content = answer
         await loading_msg.update()
 
-        if merged_results:
-            source_section = "\n\n---\n📊 **Cơ sở pháp lý tìm thấy:**\n"
-            for idx, doc in enumerate(merged_results[:10], start=1):
-                doc_id = doc.get("document_id", "Không rõ nguồn")
-                score = safe_float(doc.get("score", 0.0))
-                snippet = str(doc.get("text", ""))[:150].replace("\n", " ")
+        # 2. Hiển thị Trích dẫn Nguồn & Metadata chi tiết bên dưới
+        if results:
+            source_section = "### 📊 **Cơ sở pháp lý tìm thấy trong CSDL:**\n\n"
+            
+            for idx, doc in enumerate(results[:DEFAULT_TOP_K], start=1):
+                score = float(doc.get("score", doc.get("_rank_score", 0.0)))
+                text_snippet = str(doc.get("text", "")).strip()[:180].replace("\n", " ")
+                metadata = doc.get("metadata", {})
+
+                # Bóc tách Metadata đã được chuẩn hóa từ PostgreSQL
+                title = metadata.get("title") or doc.get("document_id") or "Không rõ tiêu đề"
+                so_ky_hieu = metadata.get("so_ky_hieu", "N/A")
+                loai_vb = metadata.get("loai_van_ban", "N/A")
+                co_quan = metadata.get("co_quan_ban_hanh", "N/A")
+                is_proc = metadata.get("is_procedural_law", False)
+                proc_tag = " ⚖️ *(Luật Tố tụng)*" if is_proc else ""
+
                 source_section += (
-                    f"📌 **[{idx}] Văn bản:** `{doc_id}` | *Độ tương đồng:* `{score:.4f}`\n"
-                    f"> *Trích đoạn:* {snippet}...\n\n"
+                    f"**[{idx}] {title}**{proc_tag}\n"
+                    f"* **Số hiệu:** `{so_ky_hieu}` | **Loại:** `{loai_vb}` | **Cơ quan:** `{co_quan}` | **Độ tương đồng:** `{score:.4f}`\n"
+                    f"> *Trích đoạn:* {text_snippet}...\n\n"
                 )
 
             await cl.Message(content=source_section).send()
@@ -222,3 +113,23 @@ async def handle_user_message(message: cl.Message):
     except Exception as e:
         loading_msg.content = f"❌ Hệ thống gặp sự cố khi xử lý câu hỏi: {str(e)}"
         await loading_msg.update()
+
+
+# Khởi tạo manager phục vụ các tính năng Admin
+doc_manager = DocumentManager()
+
+
+def handle_admin_upload(pdf_bytes, title_input, so_ky_hieu_input, is_proc_input):
+    try:
+        new_id = doc_manager.add_document_from_pdf(
+            pdf_file_bytes=pdf_bytes,
+            title=title_input,
+            so_ky_hieu=so_ky_hieu_input,
+            loai_van_ban="Thông tư",
+            co_quan_ban_hanh="Bộ Tư pháp",
+            is_procedural_law=is_proc_input,
+            tinh_trang_hieu_luc="Còn hiệu lực",
+        )
+        print(f"✅ Thêm văn bản thành công với ID: {new_id}")
+    except Exception as e:
+        print(f"❌ Lỗi khi thêm văn bản: {e}")

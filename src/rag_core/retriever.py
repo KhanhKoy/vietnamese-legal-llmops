@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 from typing import Any, Dict, List, Optional
@@ -125,8 +126,8 @@ class Retriever:
 
         for kwargs in candidates:
             try:
-                result = method(**kwargs)
-                result = await self._maybe_await(result)
+                # Run synchronous store method in a thread to avoid blocking the event loop
+                result = await asyncio.to_thread(method, **kwargs)
                 normalized = self._normalize_results(result)
                 if normalized:
                     return normalized
@@ -168,12 +169,17 @@ class Retriever:
 
         for idx, result in enumerate(results, start=1):
             score = self._safe_float(result.get("score", result.get("_rank_score", 0.0)))
-            document_id = result.get("document_id", "unknown")
-            chunk_id = result.get("chunk_id", "unknown")
             text = str(result.get("text", "")).strip()
+            metadata = result.get("metadata", {})
+
+            title = metadata.get("title", "Không rõ tiêu đề")
+            so_ky_hieu = metadata.get("so_ky_hieu", "N/A")
+            loai_vb = metadata.get("loai_van_ban", "N/A")
+            is_proc = metadata.get("is_procedural_law", False)
+            proc_tag = " (Luật Tố tụng)" if is_proc else ""
 
             blocks.append(
-                f"[Nguồn {idx} | score={score:.4f} | doc={document_id} | chunk={chunk_id}]\n{text}"
+                f"[Nguồn {idx} | Score={score:.4f} | Loại: {loai_vb}{proc_tag} | Số hiệu: {so_ky_hieu} | Tiêu đề: {title}]\n{text}"
             )
 
         return "\n\n---\n\n".join(blocks)
@@ -197,20 +203,16 @@ class Retriever:
             "retrieve",
             "query",
             "keyword_search",
-            "bm25_search",
-            "search_with_keywords",
         )
 
         for variant in query_variants:
             for method_name in preferred_methods:
-                # ĐÃ SỬA: Thêm await và bỏ đoạn check `isawaitable` thừa gây skip kết quả
                 results = await self._call_store_method(method_name, variant, k)
                 if results:
                     result_sets.append(results)
 
             if keyword_query and keyword_query != variant:
-                for method_name in ("keyword_search", "bm25_search", "search_with_keywords", "search"):
-                    # ĐÃ SỬA: Thêm await tại đây
+                for method_name in ("keyword_search", "search"):
                     results = await self._call_store_method(method_name, keyword_query, k)
                     if results:
                         result_sets.append(results)
@@ -218,13 +220,11 @@ class Retriever:
         merged = self._merge_results(result_sets)
         return merged[:k]
 
-    # ĐÃ SỬA: Chuyển thành async def
     async def retrieve_with_context(
         self,
         question: str,
         top_k: Optional[int] = None,
     ) -> Dict[str, Any]:
-        # ĐÃ SỬA: Thêm await trước hàm self.retrieve
         results = await self.retrieve(question=question, top_k=top_k)
         context = self._format_context(results)
 

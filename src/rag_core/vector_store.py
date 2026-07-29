@@ -20,23 +20,33 @@ VIETNAMESE_STOPWORDS = {
 
 
 class VectorStore:
-    def __init__(self, storage_dir: Optional[Path] = None) -> None:
+    def __init__(self, storage_dir: Optional[Path] = None, embedder: Optional[EmbeddingService] = None) -> None:
         self.settings = get_settings()
         self.use_pgvector = os.getenv("USE_PGVECTOR", "0").lower() in ("1", "true", "yes", "y")
-        self.embedder = EmbeddingService()
+        self.embedder = embedder or EmbeddingService()
+        self.embed_dim = self.embedder.dimension  # dimension of embedding vectors
 
         if self.use_pgvector:
             import psycopg
             from pgvector.psycopg import register_vector
 
+            sslmode = os.getenv("PGSSLMODE", "require")
             self.conn = psycopg.connect(
                 host=self.settings.pg_host,
                 port=self.settings.pg_port,
                 user=self.settings.pg_user,
                 password=self.settings.pg_password,
                 dbname=self.settings.pg_database,
+                sslmode=sslmode,
                 autocommit=False,
             )
+
+            # Kích hoạt extension pgvector trước
+            with self.conn.cursor() as cur:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            self.conn.commit()
+
+            # Đăng ký vector và tạo bảng
             register_vector(self.conn)
             self._init_postgres()
         else:
@@ -72,9 +82,10 @@ class VectorStore:
         self.sqlite_conn.commit()
 
     def _init_postgres(self) -> None:
+        from psycopg import sql
+
         with self.conn.cursor() as cur:
-            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-            cur.execute(
+            create_table_query = sql.SQL(
                 """
                 CREATE TABLE IF NOT EXISTS legal_chunks (
                     id SERIAL PRIMARY KEY,
@@ -83,10 +94,12 @@ class VectorStore:
                     chunk_index INTEGER NOT NULL,
                     text TEXT NOT NULL,
                     metadata_json JSONB NOT NULL,
-                    embedding vector(1536)
+                    embedding vector({dim})
                 );
                 """
-            )
+            ).format(dim=sql.Literal(self.embed_dim))
+
+            cur.execute(create_table_query)
         self.conn.commit()
 
     def _normalize_text(self, text: str) -> str:
@@ -197,14 +210,12 @@ class VectorStore:
         if hasattr(self, "sqlite_conn") and self.sqlite_conn:
             self.sqlite_conn.close()
 
-        # ĐÃ SỬA: Xóa triệt để file FAISS index
         try:
             if self.index_path.exists():
                 self.index_path.unlink()
         except PermissionError:
             pass
 
-        # ĐÃ SỬA BỔ SUNG: Xóa triệt để file SQLite meta cũ để tránh lệch dòng id
         try:
             if self.meta_path.exists():
                 self.meta_path.unlink()
@@ -248,7 +259,8 @@ class VectorStore:
         if self.index is None:
             if self.index_path.exists():
                 self.index = self.faiss.read_index(str(self.index_path))
-                self.embedding_dim = int(self.index.d)
+                if self.index is not None:
+                    self.embedding_dim = int(self.index.d)
             else:
                 self.index = self.faiss.IndexFlatIP(dim)
                 self.embedding_dim = dim
@@ -270,7 +282,8 @@ class VectorStore:
             )
         self.sqlite_conn.commit()
 
-        self.index.add(embeddings_f32)
+        assert self.index is not None
+        self.index.add(embeddings_f32)  # type: ignore
         self.total_vectors += len(chunks)
 
     def commit(self) -> None:
@@ -291,8 +304,9 @@ class VectorStore:
 
         if self.index_path.exists():
             self.index = self.faiss.read_index(str(self.index_path))
-            self.total_vectors = self.index.ntotal
-            self.embedding_dim = int(self.index.d)
+            if self.index is not None:
+                self.total_vectors = self.index.ntotal
+                self.embedding_dim = int(self.index.d)
 
     def close(self) -> None:
         if self.use_pgvector and hasattr(self, "conn") and self.conn:
@@ -307,42 +321,96 @@ class VectorStore:
             except Exception:
                 pass
 
-    def _search_pgvector(self, query: str, top_k: int) -> List[Dict[str, Any]]:
-        q_emb = self.embedder.embed_query(query)
-        q_emb_f32 = np.asarray(q_emb, dtype=np.float32)
+    def search_by_vector(
+        self,
+        query_vector: List[float],
+        top_k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Tìm kiếm k-NN vector tương đồng trong PostgreSQL pgvector bằng query_vector (dạng list float)."""
+        if not self.use_pgvector or not self.conn:
+            return []
 
-        results: List[Dict[str, Any]] = []
-        with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT chunk_id, document_id, chunk_index, text, metadata_json, (embedding <=> %s) as distance
+        try:
+            if hasattr(self.conn, "info") and self.conn.info.transaction_status == 3:
+                self.conn.rollback()
+
+            vector_str = f"[{','.join(map(str, query_vector))}]"
+
+            where_clauses = []
+            params: List[Any] = [vector_str]
+
+            if filters:
+                for key, value in filters.items():
+                    if value is not None:
+                        where_clauses.append("metadata_json @> %s::jsonb")
+                        params.append(json.dumps({key: value}, ensure_ascii=False))
+
+            where_sql = ""
+            if where_clauses:
+                where_sql = "WHERE " + " AND ".join(where_clauses)
+
+            params.append(top_k)
+
+            sql = f"""
+                SELECT 
+                    id,
+                    document_id,
+                    chunk_id,
+                    chunk_index,
+                    text,
+                    metadata_json,
+                    (embedding <=> %s::vector) AS distance
                 FROM legal_chunks
+                {where_sql}
                 ORDER BY distance ASC
                 LIMIT %s;
-                """,
-                (q_emb_f32.tolist(), top_k),
-            )
-            rows = cur.fetchall()
+            """
 
-        for row in rows:
-            metadata = row[4]
-            if isinstance(metadata, str):
-                try:
-                    metadata = json.loads(metadata)
-                except Exception:
-                    metadata = {}
-            results.append(
-                {
-                    "chunk_id": row[0],
-                    "document_id": row[1],
-                    "chunk_index": row[2],
-                    "text": row[3],
-                    "metadata": metadata,
-                    "score": float(1 - row[5]),
-                }
-            )
+            results = []
+            with self.conn.cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
 
-        return results
+                for row in rows:
+                    distance = float(row[6])
+                    similarity_score = max(0.0, 1.0 - distance)
+
+                    metadata = row[5]
+                    if isinstance(metadata, str):
+                        try:
+                            metadata = json.loads(metadata)
+                        except Exception:
+                            metadata = {}
+
+                    results.append({
+                        "id": row[0],
+                        "document_id": row[1],
+                        "chunk_id": row[2],
+                        "chunk_index": row[3],
+                        "text": row[4],
+                        "metadata": metadata if isinstance(metadata, dict) else {},
+                        "distance": distance,
+                        "score": similarity_score,
+                    })
+
+            return results
+
+        except Exception as e:
+            if self.conn:
+                self.conn.rollback()
+            print(f"❌ Lỗi khi search_by_vector: {e}")
+            return []
+
+    def _search_pgvector(
+        self,
+        query: str,
+        top_k: int,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        q_emb = self.embedder.embed_query(query)
+        q_emb_f32 = np.asarray(q_emb, dtype=np.float32).tolist()
+        return self.search_by_vector(query_vector=q_emb_f32, top_k=top_k, filters=filters)
 
     def _search_faiss(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         q_emb = self.embedder.embed_query(query)
@@ -353,8 +421,9 @@ class VectorStore:
         if self.index is None:
             raise RuntimeError("Hệ thống Vector Index trống – Hãy nạp dữ liệu trước.")
 
+        assert self.index is not None
         q_reshaped = q_emb_f32.reshape(1, -1)
-        D, I = self.index.search(q_reshaped, top_k)
+        D, I = self.index.search(q_reshaped, top_k)  # type: ignore
 
         row_ids = [self._safe_int(i) + 1 for i in I[0].tolist() if self._safe_int(i) >= 0]
         if not row_ids:
@@ -404,13 +473,19 @@ class VectorStore:
 
         return results
 
-    def search(self, query: str, embedder: Optional[EmbeddingService] = None, top_k: int = 5) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        embedder: Optional[EmbeddingService] = None,
+        top_k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
         if embedder is not None:
             self.embedder = embedder
 
         self._ensure_loaded()
         if self.use_pgvector:
-            return self._search_pgvector(query, top_k)
+            return self._search_pgvector(query, top_k, filters=filters)
         return self._search_faiss(query, top_k)
 
     def keyword_search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
@@ -459,6 +534,9 @@ class VectorStore:
             return items
 
         def run_pg(use_and: bool) -> List[Dict[str, Any]]:
+            if hasattr(self.conn, "info") and self.conn.info.transaction_status == 3:
+                self.conn.rollback()
+
             clauses = []
             params: List[Any] = []
             joiner = " AND " if use_and else " OR "
@@ -475,9 +553,15 @@ class VectorStore:
             """
             params.append(top_k * 3)
 
-            with self.conn.cursor() as cur:
-                cur.execute(sql, params)
-                rows = cur.fetchall()
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute(sql, params)
+                    rows = cur.fetchall()
+            except Exception as e:
+                if self.conn:
+                    self.conn.rollback()
+                print(f"❌ Lỗi khi keyword_search: {e}")
+                return []
 
             items: List[Dict[str, Any]] = []
             for row in rows:
@@ -500,10 +584,8 @@ class VectorStore:
                 )
             return items
 
-        # 1) thử khớp chặt
         results = run_pg(True) if self.use_pgvector else run_sqlite(True)
 
-        # 2) nếu rỗng thì nới lỏng bằng OR
         if not results and len(keywords) > 1:
             results = run_pg(False) if self.use_pgvector else run_sqlite(False)
 
@@ -575,12 +657,18 @@ class VectorStore:
     @property
     def chunk_count(self) -> int:
         if self.use_pgvector:
+            if not self.conn:
+                return 0
             try:
+                if hasattr(self.conn, "info") and self.conn.info.transaction_status == 3:
+                    self.conn.rollback()
                 with self.conn.cursor() as cur:
                     cur.execute("SELECT COUNT(*) FROM legal_chunks;")
                     row = cur.fetchone()
                     return self._safe_int(row[0], 0) if row else 0
             except Exception as e:
+                if self.conn:
+                    self.conn.rollback()
                 print(f"Warning: Không thể lấy số lượng chunk từ Postgres ({e})")
                 return 0
         return self._safe_int(self.index.ntotal, self.total_vectors) if self.index is not None else self.total_vectors
@@ -592,6 +680,60 @@ class VectorStore:
         if hasattr(chunk, "__dict__"):
             return dict(chunk.__dict__)
         raise TypeError("Chunk phải là một dictionary hoặc đối tượng Dataclass.")
+
+    def update_document_metadata(self, document_id: str, updates: dict) -> bool:
+        """
+        Cập nhật linh hoạt các trường trong metadata_json (is_procedural_law, tinh_trang_hieu_luc, ngay_het_hieu_luc...)
+        cho tất cả các chunks thuộc document_id.
+        """
+        if not self.use_pgvector or not updates:
+            return False
+
+        if hasattr(self.conn, "info") and self.conn.info.transaction_status == 3:
+            self.conn.rollback()
+
+        sql = """
+            UPDATE legal_chunks
+            SET metadata_json = metadata_json || %s::jsonb
+            WHERE document_id = %s;
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(sql, (
+                    json.dumps(updates, ensure_ascii=False),
+                    document_id
+                ))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            if self.conn:
+                self.conn.rollback()
+            print(f"❌ Lỗi khi update metadata: {e}")
+            return False
+
+    def delete_document_by_id(self, document_id: str) -> bool:
+        """Xóa tất cả các chunks thuộc về document_id"""
+        if not self.use_pgvector:
+            return False
+
+        if hasattr(self.conn, "info") and self.conn.info.transaction_status == 3:
+            self.conn.rollback()
+
+        sql = "DELETE FROM legal_chunks WHERE document_id = %s;"
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(sql, (document_id,))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            if self.conn:
+                self.conn.rollback()
+            print(f"❌ Lỗi khi xóa document: {e}")
+            return False
+
+    def get_chunk_count(self) -> int:
+        """Lấy tổng số lượng chunk đang lưu trong DB."""
+        return self.chunk_count
 
     def __del__(self) -> None:
         self.close()

@@ -13,6 +13,7 @@ def build_index_pipeline(
     metadata_limit: Optional[int] = None,
     content_limit: Optional[int] = None,
     vector_store: Optional[VectorStore] = None,
+    embedder: Optional[EmbeddingService] = None,
     document_batch_size: int = 32,
     commit_interval: int = 100,
 ) -> VectorStore:
@@ -21,13 +22,34 @@ def build_index_pipeline(
 
     Parameters
     ----------
+    embedder:
+        EmbeddingService instance to use for creating embeddings. If not provided,
+        one will be created (either from the vector_store if it has one, or a new one).
     commit_interval:
         How often (in chunks) to commit the SQLite transaction and run GC
         to free WAL/journal memory.
     """
-    store = vector_store or VectorStore()
+    # Determine embedder to use
+    if embedder is None:
+        # If vector_store provided and has an embedder attribute, use it
+        if vector_store is not None and hasattr(vector_store, "embedder") and vector_store.embedder is not None:
+            embedder = vector_store.embedder
+        else:
+            embedder = EmbeddingService()
+    else:
+        # embedder provided
+        pass
+
+    # Create vector store if not provided
+    if vector_store is None:
+        store = VectorStore(embedder=embedder)
+    else:
+        store = vector_store
+        # Ensure the store uses the embedder we decided upon
+        store.embedder = embedder
+        store.embed_dim = embedder.dimension
+
     store.reset()
-    embedder = EmbeddingService()
 
     chunk_buffer = []
     text_buffer = []
@@ -59,7 +81,7 @@ def build_index_pipeline(
                 # Periodic flush to keep SQLite WAL memory down
                 if since_last_commit >= commit_interval:
                     store.commit()
-                    gc.collect()
+                    # gc.collect()  # Removed as per original code comment
                     since_last_commit = 0
 
     # --- Flush remaining buffer ---
@@ -72,12 +94,12 @@ def build_index_pipeline(
         raise ValueError("Không tạo được chunk nào từ dataset.")
 
     store.save()
-    gc.collect()
+    # gc.collect()  # Removed as per original code comment
     return store
 
 
-def ask_pipeline(question: str, top_k: Optional[int] = None) -> Dict[str, Any]:
+async def ask_pipeline(question: str, top_k: Optional[int] = None) -> Dict[str, Any]:
     from .qa_service import QAService
 
     service = QAService()
-    return service.ask(question=question, top_k=top_k)
+    return await service.ask(question=question, top_k=top_k)

@@ -186,7 +186,7 @@ All configuration values are read from:
 
 | Variable | Description |
 |----------|-------------|
-| `HF_DATASET_NAME` | HuggingFace dataset identifier (default: `th1nhng0/vietnamese-legal-documents`). |
+| `HF_DATASET_NAME` | HuggingFace dataset identifier (default: `NguyenKH/clean_legal_knowledge`). |
 | `HF_METADATA_CONFIG` | Dataset config for metadata (default: `metadata`). |
 | `HF_CONTENT_PARQUET_URL` | Direct link to the content parquet file. |
 | `EMBEDDING_MODEL_NAME` | SentenceTransformer model name. |
@@ -329,7 +329,7 @@ A complete list of variables used throughout the project:
 
 | Variable | Where it’s used | Default / Example |
 |----------|----------------|-------------------|
-| `HF_DATASET_NAME` | `DatasetReader` | `th1nhng0/vietnamese-legal-documents` |
+| `HF_DATASET_NAME` | `DatasetReader` | `NguyenKH/clean_legal_knowledge` |
 | `HF_METADATA_CONFIG` | `DatasetReader` | `metadata` |
 | `HF_CONTENT_PARQUET_URL` | `DatasetReader` | URL to content parquet |
 | `EMBEDDING_MODEL_NAME` | `EmbeddingService` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |

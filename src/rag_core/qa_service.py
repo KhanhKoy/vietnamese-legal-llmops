@@ -140,7 +140,7 @@ class QAService:
                     result = method(query, top_k=top_k)
                 except TypeError:
                     result = method(query)
-                # Đoạn xử lý Async an toàn đã có sẵn của bạn
+
                 result = await self._maybe_await(result)
                 normalized = self._normalize_retrieval(result, top_k)
                 if normalized["results"]:
@@ -193,7 +193,7 @@ class QAService:
         return " ".join(keywords[:12]) if keywords else q
 
     async def ask(self, question: str, top_k: Optional[int] = None) -> Dict[str, Any]:
-        top_k = top_k or 10
+        top_k = top_k or 5
         question = self._normalize_text(question)
 
         variants = self._build_query_variants(question)
@@ -201,10 +201,10 @@ class QAService:
         if broadened and broadened not in variants:
             variants.append(broadened)
 
-        # 🚀 CẢI TIẾN MỚI: Tích hợp Query Rewrite bằng Gemini LLM để tối ưu hóa vector tìm kiếm
+        # 🚀 Tối ưu hóa truy vấn bằng Gemini LLM
         rewrite_prompt = (
-            f"Bạn là chuyên gia ngôn ngữ pháp luật. Hãy chuyển đổi câu hỏi dưới đây của người dùng "
-            f"thành một câu khẳng định ngắn gọn, chứa các từ khóa học thuật chính xác theo văn phong văn bản luật Việt Nam để phục vụ tra cứu.\n"
+            f"Bạn là chuyên gia ngôn ngữ pháp luật. Hãy chuyển đổi câu hỏi dưới đây thành một câu khẳng định ngắn gọn, "
+            f"chứa các từ khóa học thuật chính xác theo văn phong văn bản luật Việt Nam để phục vụ tra cứu.\n"
             f"Chỉ trả ra đúng câu văn sau khi chuyển đổi, không giải thích gì thêm.\n\n"
             f"Câu hỏi người dùng: {question}\n"
             f"Câu tra cứu chuẩn hóa:"
@@ -221,17 +221,15 @@ class QAService:
 
         merged_results = self._merge_results(retrievals)
 
-        # Fallback: Search rộng hơn nếu chưa tìm thấy gì
+        # Fallback search nếu chưa ra kết quả
         if not merged_results and broadened:
             fallback = await self._retrieve(broadened, top_k=top_k * 2)
             if fallback.get("results"):
                 merged_results = fallback.get("results", [])
 
+        # 🎯 CHUẨN HÓA CÂU TRẢ LỜI KHI KHÔNG TÌM THẤY THÔNG TIN
         if not merged_results:
-            fallback_answer = (
-                "Tôi chưa truy hồi được kết quả phù hợp từ dữ liệu hiện có. "
-                "Vui lòng nêu rõ số điều, khoản, tên văn bản hoặc từ khóa pháp lý cụ thể hơn."
-            )
+            fallback_answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
             return {
                 "question": question,
                 "answer": fallback_answer,
@@ -245,11 +243,9 @@ class QAService:
 
         prompt = build_prompt(question, merged_results[:top_k])
         answer = await self._safe_generate(prompt, default="")
+        
         if not self._normalize_text(answer):
-            answer = (
-                "Tôi đã tìm thấy tài liệu liên quan nhưng chưa thể tổng hợp câu trả lời chắc chắn. "
-                "Vui lòng cung cấp thêm số điều, khoản hoặc tên văn bản."
-            )
+            answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
 
         return {
             "question": question,
