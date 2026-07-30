@@ -6,7 +6,7 @@ import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from psycopg2.extras import execute_values
+
 
 import numpy as np
 
@@ -237,10 +237,9 @@ class VectorStore:
         embeddings_f32 = np.asarray(embeddings, dtype=np.float32)
 
         # ==========================================
-        # 1. TRƯỜNG HỢP DÙNG PGVECTOR (AWS RDS)
+        # 1. TRƯỜNG HỢP DÙNG PGVECTOR (AWS RDS - PSYCOPG v3)
         # ==========================================
         if self.use_pgvector:
-            # Gom tất cả chunks trong batch thành danh sách các Tuple
             records = [
                 (
                     str(ch.get("chunk_id", "")),
@@ -253,17 +252,19 @@ class VectorStore:
                 for ch, emb in zip(chunk_dicts, embeddings_f32)
             ]
 
-            # Thêm ON CONFLICT để chống lỗi crash nếu lỡ trùng chunk_id
             query = """
                 INSERT INTO legal_chunks (chunk_id, document_id, chunk_index, text, metadata_json, embedding)
-                VALUES %s
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (chunk_id) DO NOTHING;
             """
 
-            # Bulk insert cả nghìn dòng trong đúng 1 truy vấn mạng
+            # Psycopg v3 tối ưu executemany cực tốt cho bulk insert
+            batch_size = 1000
             cur = self.conn.cursor()
             try:
-                execute_values(cur, query, records, page_size=1000)
+                for i in range(0, len(records), batch_size):
+                    batch = records[i : i + batch_size]
+                    cur.executemany(query, batch)
                 self.conn.commit()
             finally:
                 cur.close()
