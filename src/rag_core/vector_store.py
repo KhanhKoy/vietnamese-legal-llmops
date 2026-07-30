@@ -6,6 +6,7 @@ import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from psycopg2.extras import execute_values
 
 import numpy as np
 
@@ -235,26 +236,40 @@ class VectorStore:
         chunk_dicts = [self._chunk_to_dict(c) for c in chunks]
         embeddings_f32 = np.asarray(embeddings, dtype=np.float32)
 
+        # ==========================================
+        # 1. TRƯỜNG HỢP DÙNG PGVECTOR (AWS RDS)
+        # ==========================================
         if self.use_pgvector:
+            # Gom tất cả chunks trong batch thành danh sách các Tuple
+            records = [
+                (
+                    str(ch.get("chunk_id", "")),
+                    str(ch.get("document_id", "")),
+                    self._safe_int(ch.get("chunk_index", 0)),
+                    str(ch.get("text", "")),
+                    json.dumps(ch.get("metadata", {}), ensure_ascii=False),
+                    emb.tolist(),
+                )
+                for ch, emb in zip(chunk_dicts, embeddings_f32)
+            ]
+
+            # Thêm ON CONFLICT để chống lỗi crash nếu lỡ trùng chunk_id
+            query = """
+                INSERT INTO legal_chunks (chunk_id, document_id, chunk_index, text, metadata_json, embedding)
+                VALUES %s
+                ON CONFLICT (chunk_id) DO NOTHING;
+            """
+
+            # Bulk insert cả nghìn dòng trong đúng 1 truy vấn mạng
             with self.conn.cursor() as cur:
-                for ch, emb in zip(chunk_dicts, embeddings_f32):
-                    cur.execute(
-                        """
-                        INSERT INTO legal_chunks (chunk_id, document_id, chunk_index, text, metadata_json, embedding)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            str(ch.get("chunk_id", "")),
-                            str(ch.get("document_id", "")),
-                            self._safe_int(ch.get("chunk_index", 0)),
-                            str(ch.get("text", "")),
-                            json.dumps(ch.get("metadata", {}), ensure_ascii=False),
-                            emb.tolist(),
-                        ),
-                    )
+                execute_values(cur, query, records, page_size=1000)
+            
             self.conn.commit()
             return
 
+        # ==========================================
+        # 2. TRƯỜNG HỢP DÙNG FAISS + SQLITE (LOCAL)
+        # ==========================================
         dim = embeddings_f32.shape[1]
         if self.index is None:
             if self.index_path.exists():
@@ -265,21 +280,26 @@ class VectorStore:
                 self.index = self.faiss.IndexFlatIP(dim)
                 self.embedding_dim = dim
 
-        cursor = self.sqlite_conn.cursor()
-        for ch in chunk_dicts:
-            cursor.execute(
-                """
-                INSERT INTO metadata (chunk_id, document_id, chunk_index, text, metadata_json)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    str(ch.get("chunk_id", "")),
-                    str(ch.get("document_id", "")),
-                    self._safe_int(ch.get("chunk_index", 0)),
-                    str(ch.get("text", "")),
-                    json.dumps(ch.get("metadata", {}), ensure_ascii=False),
-                ),
+        sqlite_records = [
+            (
+                str(ch.get("chunk_id", "")),
+                str(ch.get("document_id", "")),
+                self._safe_int(ch.get("chunk_index", 0)),
+                str(ch.get("text", "")),
+                json.dumps(ch.get("metadata", {}), ensure_ascii=False),
             )
+            for ch in chunk_dicts
+        ]
+
+        # Tối ưu hóa SQLite bằng executemany thay cho vòng lặp
+        cursor = self.sqlite_conn.cursor()
+        cursor.executemany(
+            """
+            INSERT INTO metadata (chunk_id, document_id, chunk_index, text, metadata_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            sqlite_records,
+        )
         self.sqlite_conn.commit()
 
         assert self.index is not None

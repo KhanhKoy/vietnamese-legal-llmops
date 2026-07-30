@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 from typing import Any, Dict, List, Optional
 
 from .generator import GeneratorService
 from .prompt import build_prompt
+from .reranker import RerankerService  # 👈 Import RerankerService mới
 from .retriever import Retriever
-
 
 VIETNAMESE_STOPWORDS = {
     "và", "hoặc", "là", "của", "cho", "với", "một", "những", "các", "theo",
@@ -21,9 +22,11 @@ class QAService:
         self,
         retriever: Optional[Retriever] = None,
         generator: Optional[GeneratorService] = None,
+        reranker: Optional[RerankerService] = None,  # 👈 Bổ sung tham số reranker
     ) -> None:
         self.retriever = retriever or Retriever()
         self.generator = generator or GeneratorService()
+        self.reranker = reranker or RerankerService()  # 👈 Khởi tạo Reranker
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", (text or "").strip())
@@ -196,6 +199,9 @@ class QAService:
         top_k = top_k or 5
         question = self._normalize_text(question)
 
+        # 🌟 Lấy số lượng ứng viên rộng hơn (Top 15 - 20) để Reranker đánh giá
+        candidate_k = max(top_k * 3, 15)
+
         variants = self._build_query_variants(question)
         broadened = self._broaden_question(question)
         if broadened and broadened not in variants:
@@ -215,7 +221,7 @@ class QAService:
 
         retrievals: List[Dict[str, Any]] = []
         for variant in variants:
-            retrieval = await self._retrieve(variant, top_k=top_k)
+            retrieval = await self._retrieve(variant, top_k=candidate_k)
             if retrieval.get("results"):
                 retrievals.append(retrieval)
 
@@ -223,7 +229,7 @@ class QAService:
 
         # Fallback search nếu chưa ra kết quả
         if not merged_results and broadened:
-            fallback = await self._retrieve(broadened, top_k=top_k * 2)
+            fallback = await self._retrieve(broadened, top_k=candidate_k * 2)
             if fallback.get("results"):
                 merged_results = fallback.get("results", [])
 
@@ -241,9 +247,17 @@ class QAService:
                 "optimized_query": optimized_query or broadened,
             }
 
-        prompt = build_prompt(question, merged_results[:top_k])
+        # 🌟 ĐIỂM NÂNG CẤP MỚI: Tiến hành Re-rank danh sách ứng viên thu được
+        final_results = await asyncio.to_thread(
+            self.reranker.rerank,
+            query=question,
+            documents=merged_results,
+            top_k=top_k,
+        )
+
+        prompt = build_prompt(question, final_results)
         answer = await self._safe_generate(prompt, default="")
-        
+
         if not self._normalize_text(answer):
             answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
 
@@ -251,8 +265,8 @@ class QAService:
             "question": question,
             "answer": answer,
             "top_k": top_k,
-            "results": merged_results[:top_k],
-            "context": "\n\n".join(str(d.get("text", "")).strip() for d in merged_results[:top_k]),
+            "results": final_results,
+            "context": "\n\n".join(str(d.get("text", "")).strip() for d in final_results),
             "prompt": prompt,
             "query_variants": variants,
             "optimized_query": optimized_query or broadened,
