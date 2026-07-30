@@ -97,6 +97,7 @@ class VectorStore:
                     metadata_json JSONB NOT NULL,
                     embedding vector({dim})
                 );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_legal_chunks_chunk_id ON legal_chunks (chunk_id);
                 """
             ).format(dim=sql.Literal(self.embed_dim))
 
