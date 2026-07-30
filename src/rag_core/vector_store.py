@@ -261,10 +261,12 @@ class VectorStore:
             """
 
             # Bulk insert cả nghìn dòng trong đúng 1 truy vấn mạng
-            with self.conn.cursor() as cur:
+            cur = self.conn.cursor()
+            try:
                 execute_values(cur, query, records, page_size=1000)
-            
-            self.conn.commit()
+                self.conn.commit()
+            finally:
+                cur.close()
             return
 
         # ==========================================
