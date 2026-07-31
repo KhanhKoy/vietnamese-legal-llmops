@@ -19,3 +19,7 @@ pgvector
 psycopg[binary]
 chainlit
 google-genai
+streamlit>=1.32.0
+pandas>=2.0.0
+plotly
+altair>=5.0.0
