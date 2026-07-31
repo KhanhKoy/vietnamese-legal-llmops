@@ -755,6 +755,35 @@ class VectorStore:
             print(f"❌ Lỗi khi xóa document: {e}")
             return False
 
+    def get_existing_chunk_ids(self) -> set[str]:
+        """Lấy toàn bộ danh sách chunk_id đã có trong Database (Postgres hoặc SQLite)."""
+        if self.use_pgvector:
+            if not self.conn:
+                return set()
+            try:
+                if hasattr(self.conn, "info") and self.conn.info.transaction_status == 3:
+                    self.conn.rollback()
+                with self.conn.cursor() as cur:
+                    cur.execute("SELECT chunk_id FROM legal_chunks;")
+                    rows = cur.fetchall()
+                    return {str(row[0]) for row in rows}
+            except Exception as e:
+                if self.conn:
+                    self.conn.rollback()
+                print(f"⚠️ Không thể lấy danh sách chunk_id từ Postgres ({e})")
+                return set()
+        else:
+            if not hasattr(self, "sqlite_conn") or not self.sqlite_conn:
+                return set()
+            try:
+                cursor = self.sqlite_conn.cursor()
+                cursor.execute("SELECT chunk_id FROM metadata;")
+                rows = cursor.fetchall()
+                return {str(row[0]) for row in rows}
+            except Exception as e:
+                print(f"⚠️ Không thể lấy danh sách chunk_id từ SQLite ({e})")
+                return set()
+
     def get_chunk_count(self) -> int:
         """Lấy tổng số lượng chunk đang lưu trong DB."""
         return self.chunk_count
