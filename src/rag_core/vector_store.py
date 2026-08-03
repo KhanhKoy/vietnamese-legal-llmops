@@ -661,6 +661,9 @@ class VectorStore:
         return final_results[:top_k]
 
     def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        # Nếu dùng pgvector, chỉ cần search_by_vector để tránh bị treo bởi câu lệnh LIKE
+        if self.use_pgvector:
+            return self.search(query=query, top_k=top_k)
         return self.hybrid_search(query=query, top_k=top_k)
 
     def query(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:

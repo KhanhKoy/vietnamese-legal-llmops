@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 
 class RerankerService:
-    def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3") -> None:
+    def __init__(self, model_name: str = "AITeamVN/Vietnamese_Reranker") -> None:
         self.model_name = model_name
         self._model = None
         # Kiểm tra xem có bật Reranker qua biến môi trường không (mặc định BẬT)
