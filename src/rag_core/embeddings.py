@@ -11,6 +11,7 @@ from .config import get_settings
 class EmbeddingService:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.batch_size = self.settings.embedding_batch_size
         self.use_bedrock = (
             os.getenv("USE_BEDROCK_EMBEDDING", "0").lower()
             in ("1", "true", "yes", "y")
@@ -30,7 +31,11 @@ class EmbeddingService:
                 "BEDROCK_EMBEDDING_MODEL",
                 "amazon.titan-embed-text-v1",  # default Titan Text Embedding v1
             )
-            boto_config = Config(retries={"max_attempts": 5, "mode": "standard"})
+            boto_config = Config(
+                retries={"max_attempts": 5, "mode": "standard"},
+                connect_timeout=int(os.getenv("AWS_CONNECT_TIMEOUT_SECONDS", "5")),
+                read_timeout=int(os.getenv("AWS_READ_TIMEOUT_SECONDS", "30")),
+            )
             self._client = boto3.client(
                 service_name="bedrock-runtime",
                 region_name=self.region,
@@ -42,9 +47,12 @@ class EmbeddingService:
             import torch  # noqa: F401
 
             self.model_name = self.settings.embedding_model_name
-            self.batch_size = self.settings.embedding_batch_size
-
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            requested_device = os.getenv("DEVICE", "auto").lower()
+            device = (
+                requested_device
+                if requested_device in {"cpu", "cuda"}
+                else ("cuda" if torch.cuda.is_available() else "cpu")
+            )
             from sentence_transformers import SentenceTransformer
 
             self.model: Any = SentenceTransformer(self.model_name, device=device)

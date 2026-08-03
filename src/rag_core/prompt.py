@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Dict, Any
-
+from typing import Any, Dict, List
 
 SYSTEM_PROMPT = """Bạn là trợ lý tư vấn pháp luật Việt Nam chuyên nghiệp và chính xác.
 Nhiệm vụ của bạn là trả lời câu hỏi dựa TRỰC TIẾP và DUY NHẤT vào Ngữ cảnh văn bản pháp luật được cung cấp dưới đây.
@@ -33,7 +32,7 @@ def build_context_block(results: List[Dict[str, Any]]) -> str:
         loai_vb = metadata.get("loai_van_ban", "N/A")
         co_quan = metadata.get("co_quan_ban_hanh", "N/A")
 
-        header_info = f"[Nguồn {idx}] Văn bản: {title} | Số hiệu: {so_ky_hieu} | Loại: {loai_vb} | Cơ quan: {co_quan} (Score: {score:.4f})"
+        header_info = f"[Nguồn {idx}] ID: {doc_id} | Văn bản: {title} | Số hiệu: {so_ky_hieu} | Loại: {loai_vb} | Cơ quan: {co_quan} (Score: {score:.4f})"
 
         blocks.append(
             f"=== {header_info} ===\n{text}"

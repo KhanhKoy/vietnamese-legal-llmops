@@ -1,9 +1,10 @@
 # Law-Chatbot
 
-A Retrieval‑Augmented Generation (RAG) chatbot specialized for Vietnamese legal documents.  
+A Retrieval‑Augmented Generation (RAG) chatbot specialized for Vietnamese legal documents.
 The project loads a large legal corpus, chunks the text, creates embeddings with a multilingual Sentence‑Transformer model, stores the vectors in a SQLite‑based vector store, and exposes a FastAPI service that can answer legal‑related questions.
 
 ## Table of Contents
+
 - [Project Overview](#project-overview)
 - [Features](#features)
 - [Future Development Plan](#future-development-plan)
@@ -62,20 +63,23 @@ Law‑Chatbot implements an end‑to‑end RAG pipeline:
 The following roadmap outlines the steps to evolve the current prototype into a production‑ready, AWS‑native RAG system.
 
 ### Workstream 1 – Data Ingestion Pipeline (Green Stream)
-1. **Dataset acquisition** – Download the `vietnamese-legal-documents` dataset from Hugging Face as raw files.  
-2. **Chunking script** – Write Python code that reads the legal corpus, splits it into chunks (~500‑1000 chars) while preserving identifying markers (e.g., “Điều 5, Nghị định 123…”).  
-3. **S3 bucket & Lambda** – Create an Amazon S3 bucket. Implement a Python AWS Lambda function that triggers on new file uploads, calls **Bedrock Titan Embedding** to convert text to vectors, and stores the result.  
+
+1. **Dataset acquisition** – Download the `vietnamese-legal-documents` dataset from Hugging Face as raw files.
+2. **Chunking script** – Write Python code that reads the legal corpus, splits it into chunks (~500‑1000 chars) while preserving identifying markers (e.g., “Điều 5, Nghị định 123…”).
+3. **S3 bucket & Lambda** – Create an Amazon S3 bucket. Implement a Python AWS Lambda function that triggers on new file uploads, calls **Bedrock Titan Embedding** to convert text to vectors, and stores the result.
 4. **Database provisioning** – Provision an Amazon RDS PostgreSQL instance, enable the `pgvector` extension, and create a table to hold the vectors and associated metadata.
 
 ### Workstream 2 – Interface & RAG Logic (Blue Stream)
-1. **Chainlit UI** – Build `app.py` with the Chainlit library to provide an interactive chat interface that streams responses in real time.  
-2. **Retrieval function** – Implement a function that connects the Chainlit frontend to the RDS PostgreSQL instance (via `psycopg2` or LangChain) and performs cosine‑similarity search to retrieve the most relevant law passages.  
-3. **Generation function** – Design a prompt template, send the assembled prompt to **Amazon Bedrock** (using Titan Text or Claude 3 / Llama 3 LLMs), and stream the answer back to the UI using Chainlit’s `cl.Message().stream_token()`.  
+
+1. **Chainlit UI** – Build `app.py` with the Chainlit library to provide an interactive chat interface that streams responses in real time.
+2. **Retrieval function** – Implement a function that connects the Chainlit frontend to the RDS PostgreSQL instance (via `psycopg2` or LangChain) and performs cosine‑similarity search to retrieve the most relevant law passages.
+3. **Generation function** – Design a prompt template, send the assembled prompt to **Amazon Bedrock** (using Titan Text or Claude 3 / Llama 3 LLMs), and stream the answer back to the UI using Chainlit’s `cl.Message().stream_token()`.
 4. **Chat history persistence** – Configure Amazon DynamoDB to store conversation history keyed by user ID.
 
 ### Workstream 3 – Networking & Observability (Red & Purple Streams)
-1. **VPC setup** – Create an AWS VPC with a public subnet containing an Application Load Balancer (ALB) for the public endpoint, and a private subnet hosting the EC2 instances running Chainlit and the RDS database.  
-2. **VPC Endpoints** – Establish Interface VPC Endpoints for Bedrock and DynamoDB inside the private subnet so that EC2 instances can call these services without traversing the public internet.  
+
+1. **VPC setup** – Create an AWS VPC with a public subnet containing an Application Load Balancer (ALB) for the public endpoint, and a private subnet hosting the EC2 instances running Chainlit and the RDS database.
+2. **VPC Endpoints** – Establish Interface VPC Endpoints for Bedrock and DynamoDB inside the private subnet so that EC2 instances can call these services without traversing the public internet.
 3. **Logging & alerting** – Configure the application to push logs to Amazon CloudWatch. Set up CloudWatch alarms that trigger an Amazon SNS notification (email) when HTTP 500 errors exceed a defined threshold.
 
 > **Note:** The work‑streams can be mapped to sprint milestones: complete the data ingestion pipeline first, then deliver the Chainlit‑based UI and RAG logic, and finally harden the deployment with networking, monitoring, and alerting.
@@ -86,10 +90,10 @@ The following roadmap outlines the steps to evolve the current prototype into a 
 
 The system follows a reference AWS architecture:
 
-- **Frontend/Backend** – Chainlit framework running inside a Docker container hosted on Amazon EC2.  
-- **Vector Database** – Amazon RDS (PostgreSQL) with the `pgvector` extension for efficient similarity search.  
-- **Generative AI Service** – Amazon Bedrock (providing *Titan Text Embeddings* and LLMs such as Claude 3 or Llama 3).  
-- **Session Management** – Amazon DynamoDB stores chat histories.  
+- **Frontend/Backend** – Chainlit framework running inside a Docker container hosted on Amazon EC2.
+- **Vector Database** – Amazon RDS (PostgreSQL) with the `pgvector` extension for efficient similarity search.
+- **Generative AI Service** – Amazon Bedrock (providing *Titan Text Embeddings* and LLMs such as Claude 3 or Llama 3).
+- **Session Management** – Amazon DynamoDB stores chat histories.
 - **Monitoring & Alerting** – Amazon CloudWatch aggregates logs; Amazon SNS sends email alerts on anomalies.
 
 ```
@@ -138,10 +142,10 @@ The system follows a reference AWS architecture:
 
 ## Prerequisites
 
-- **Python 3.9+** (tested on 3.11)  
-- **Git**  
-- (Optional) **Docker** & **docker‑compose** for containerised deployment.  
-- **AWS CLI** or configured boto3 credentials if you intend to use `scripts/sync_to_s3.py`.  
+- **Python 3.9+** (tested on 3.11)
+- **Git**
+- (Optional) **Docker** & **docker‑compose** for containerised deployment.
+- **AWS CLI** or configured boto3 credentials if you intend to use `scripts/sync_to_s3.py`.
 - At least **2 GB RAM** for building the index (more if you increase batch sizes).
 
 ---
@@ -180,25 +184,25 @@ cp .env.sample .env   # copy the template
 
 All configuration values are read from:
 
-- **`.env`** file (loaded via `python‑dotenv` inside `src/rag_core/config.py`).  
-- **YAML files** in `configs/` (`dev.yaml`, `prod.yaml`, `logging.yaml`, `aws.yaml`) – used by specific scripts.  
+- **`.env`** file (loaded via `python‑dotenv` inside `src/rag_core/config.py`).
+- **YAML files** in `configs/` (`dev.yaml`, `prod.yaml`, `logging.yaml`, `aws.yaml`) – used by specific scripts.
 - **Environment variables** override YAML values.
 
-| Variable | Description |
-|----------|-------------|
-| `HF_DATASET_NAME` | HuggingFace dataset identifier (default: `NguyenKH/clean_legal_knowledge`). |
-| `HF_METADATA_CONFIG` | Dataset config for metadata (default: `metadata`). |
-| `HF_CONTENT_PARQUET_URL` | Direct link to the content parquet file. |
-| `EMBEDDING_MODEL_NAME` | SentenceTransformer model name. |
-| `EMBEDDING_BATCH_SIZE` | Batch size for embedding generation (default: 32). |
-| `CHUNK_SIZE_CHARS` | Approximate max characters per chunk (default: 1200). |
-| `CHUNK_OVERLAP_CHARS` | Overlap between chunks (default: 200). |
-| `VECTOR_STORE_DIR` | Folder where SQLite vector store is saved (default: `models/vector_store`). |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_DEFAULT_REGION` | Credentials for boto3/S3 sync. |
-| `VECTOR_S3_BUCKET` | S3 bucket to store/retrieve vector store artefacts. |
-| `VECTOR_S3_PREFIX` | Prefix (folder) inside the bucket. |
-| `LOG_LEVEL` | Logging level (`INFO`, `DEBUG`, etc.). |
-| `PORT` (if you want to override) | `uvicorn` entrypoint (default: `8000`). |
+| Variable                                                                   | Description                                                                  |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `HF_DATASET_NAME`                                                        | HuggingFace dataset identifier (default:`NguyenKH/clean_legal_knowledge`). |
+| `HF_METADATA_CONFIG`                                                     | Dataset config for metadata (default:`metadata`).                          |
+| `HF_CONTENT_PARQUET_URL`                                                 | Direct link to the content parquet file.                                     |
+| `EMBEDDING_MODEL_NAME`                                                   | SentenceTransformer model name.                                              |
+| `EMBEDDING_BATCH_SIZE`                                                   | Batch size for embedding generation (default: 32).                           |
+| `CHUNK_SIZE_CHARS`                                                       | Approximate max characters per chunk (default: 1200).                        |
+| `CHUNK_OVERLAP_CHARS`                                                    | Overlap between chunks (default: 200).                                       |
+| `VECTOR_STORE_DIR`                                                       | Folder where SQLite vector store is saved (default:`models/vector_store`). |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_DEFAULT_REGION` | Credentials for boto3/S3 sync.                                               |
+| `VECTOR_S3_BUCKET`                                                       | S3 bucket to store/retrieve vector store artefacts.                          |
+| `VECTOR_S3_PREFIX`                                                       | Prefix (folder) inside the bucket.                                           |
+| `LOG_LEVEL`                                                              | Logging level (`INFO`, `DEBUG`, etc.).                                   |
+| `PORT` (if you want to override)                                         | `uvicorn` entrypoint (default: `8000`).                                  |
 
 Create or edit `.env` based on `.env.sample` to set these values.
 
@@ -223,11 +227,11 @@ python scripts/build_index.py \
 
 The script will:
 
-1. Stream metadata into a temporary SQLite file.  
-2. Iterate over content in batches, joining with metadata.  
-3. Chunk each document.  
-4. Generate embeddings in batches (`EMBEDDING_BATCH_SIZE`).  
-5. Insert into the vector store, committing every `commit_interval` chunks (default 100) to keep RAM low.  
+1. Stream metadata into a temporary SQLite file.
+2. Iterate over content in batches, joining with metadata.
+3. Chunk each document.
+4. Generate embeddings in batches (`EMBEDDING_BATCH_SIZE`).
+5. Insert into the vector store, committing every `commit_interval` chunks (default 100) to keep RAM low.
 6. Call `store.save()` to write metadata (`store_meta.json`).
 
 > **Note:** The first run may take considerable time depending on dataset size and hardware. Subsequent runs are fast if you reuse the existing vector store (delete the folder to force a rebuild).
@@ -327,23 +331,23 @@ You can adjust the number of questions or the `top_k` via command‑line argumen
 
 A complete list of variables used throughout the project:
 
-| Variable | Where it’s used | Default / Example |
-|----------|----------------|-------------------|
-| `HF_DATASET_NAME` | `DatasetReader` | `NguyenKH/clean_legal_knowledge` |
-| `HF_METADATA_CONFIG` | `DatasetReader` | `metadata` |
-| `HF_CONTENT_PARQUET_URL` | `DatasetReader` | URL to content parquet |
-| `EMBEDDING_MODEL_NAME` | `EmbeddingService` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |
-| `EMBEDDING_BATCH_SIZE` | `EmbeddingService` | `32` |
-| `CHUNK_SIZE_CHARS` | `chunking.split_text` | `1200` |
-| `CHUNK_OVERLAP_CHARS` | `chunking.split_text` | `200` |
-| `VECTOR_STORE_DIR` | `VectorStore.__init__` | `models/vector_store` |
-| `COMMIT_INTERVAL` (hardcoded in `pipeline.py`) | `build_index_pipeline` | `100` |
-| `DOCUMENT_BATCH_SIZE` (argument to `build_index_pipeline`) | `build_index.py` | `32` |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` | `boto3` client in `sync_to_s3.py` | – |
-| `VECTOR_S3_BUCKET` | `sync_to_s3.py` | – |
-| `VECTOR_S3_PREFIX` | `sync_to_s3.py` | – |
-| `LOG_LEVEL` | `monitoring/logging_config.py` | `INFO` |
-| `PORT` (if you want to override) | `uvicorn` entrypoint | `8000` |
+| Variable                                                                 | Where it’s used                      | Default / Example                                               |
+| ------------------------------------------------------------------------ | ------------------------------------- | --------------------------------------------------------------- |
+| `HF_DATASET_NAME`                                                      | `DatasetReader`                     | `NguyenKH/clean_legal_knowledge`                              |
+| `HF_METADATA_CONFIG`                                                   | `DatasetReader`                     | `metadata`                                                    |
+| `HF_CONTENT_PARQUET_URL`                                               | `DatasetReader`                     | URL to content parquet                                          |
+| `EMBEDDING_MODEL_NAME`                                                 | `EmbeddingService`                  | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |
+| `EMBEDDING_BATCH_SIZE`                                                 | `EmbeddingService`                  | `32`                                                          |
+| `CHUNK_SIZE_CHARS`                                                     | `chunking.split_text`               | `1200`                                                        |
+| `CHUNK_OVERLAP_CHARS`                                                  | `chunking.split_text`               | `200`                                                         |
+| `VECTOR_STORE_DIR`                                                     | `VectorStore.__init__`              | `models/vector_store`                                         |
+| `COMMIT_INTERVAL` (hardcoded in `pipeline.py`)                       | `build_index_pipeline`              | `100`                                                         |
+| `DOCUMENT_BATCH_SIZE` (argument to `build_index_pipeline`)           | `build_index.py`                    | `32`                                                          |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` | `boto3` client in `sync_to_s3.py` | –                                                              |
+| `VECTOR_S3_BUCKET`                                                     | `sync_to_s3.py`                     | –                                                              |
+| `VECTOR_S3_PREFIX`                                                     | `sync_to_s3.py`                     | –                                                              |
+| `LOG_LEVEL`                                                            | `monitoring/logging_config.py`      | `INFO`                                                        |
+| `PORT` (if you want to override)                                       | `uvicorn` entrypoint                | `8000`                                                        |
 
 Create or edit `.env` based on `.env.sample` to set these values.
 
@@ -405,12 +409,12 @@ Law-Chatbot/
 
 ## Contributing
 
-1. Fork the repository and create your feature branch (`git checkout -b feature/awesome-thing`).  
-2. Make sure your changes follow the existing code style (PEP8, type hints where appropriate).  
-3. Add or update tests as needed.  
-4. Run the full test suite locally: `pytest`.  
-5. Commit with a clear message and push to your fork.  
-6. Open a Pull Request describing the changes and any relevant performance or security impact.  
+1. Fork the repository and create your feature branch (`git checkout -b feature/awesome-thing`).
+2. Make sure your changes follow the existing code style (PEP8, type hints where appropriate).
+3. Add or update tests as needed.
+4. Run the full test suite locally: `pytest`.
+5. Commit with a clear message and push to your fork.
+6. Open a Pull Request describing the changes and any relevant performance or security impact.
 
 > **Please never commit `.env` or any file under `models/`** – add them to `.gitignore` if they appear accidentally.
 
@@ -420,6 +424,22 @@ Law-Chatbot/
 
 This project is licensed under the MIT License – see the `LICENSE` file for details.
 
----  
+---
 
 *Happy coding and may your legal queries always find the right answer!* 🚀
+
+---
+
+## Current performance and AWS architecture work
+
+The current implementation checklist is maintained in
+[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md). Important entrypoints:
+
+- FastAPI backend: `python scripts/run_api.py`
+- Chainlit compatibility UI: `chainlit run app.py`
+- HNSW build: `python create_hnsw_index.py`
+- AWS foundation template: `infra/foundation.yaml`
+- PostgreSQL admin-domain migration: `migrations/001_admin_domain.sql`
+
+For local API-only development, set `AUTH_DISABLED=true`. Never use that setting
+in staging or production; configure Cognito and keep `AUTH_DISABLED=false`.

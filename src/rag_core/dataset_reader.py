@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Iterator, Optional
 
 from .config import get_settings
 
@@ -17,8 +15,8 @@ def iter_documents(
 
     print(f"🚀 Đang kết nối và tải dataset sạch từ HuggingFace: {hf_name}...")
     
-    from huggingface_hub import hf_hub_download
     import pyarrow.parquet as pq
+    from huggingface_hub import hf_hub_download
 
     # Tải file parquet trực tiếp từ Hugging Face Repo của bạn
     try:

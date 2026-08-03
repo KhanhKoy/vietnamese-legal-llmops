@@ -7,8 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from .config import get_settings
 from .embeddings import EmbeddingService
-from .vector_store import VectorStore
-
+from .vector_store import VectorSearchError, VectorStore
 
 VIETNAMESE_STOPWORDS = {
     "và", "hoặc", "là", "của", "cho", "với", "một", "những", "các", "theo",
@@ -25,9 +24,16 @@ class Retriever:
     ) -> None:
         self.settings = get_settings()
         self.embedder = embedder or EmbeddingService()
-        self.vector_store = vector_store or VectorStore()
+        # Reuse one embedding model.  Loading a second SentenceTransformer here
+        # wastes RAM/VRAM and makes the first request noticeably slower.
+        self.vector_store = vector_store or VectorStore(embedder=self.embedder)
 
     def _ensure_loaded(self) -> None:
+        # PostgreSQL is already queryable after the connection is opened.  A
+        # COUNT(*) on every retrieval is expensive and does not "load" pgvector.
+        if getattr(self.vector_store, "use_pgvector", False):
+            return
+
         chunk_count = getattr(self.vector_store, "chunk_count", None)
         if chunk_count in (None, 0):
             load_fn = getattr(self.vector_store, "load", None)
@@ -126,15 +132,22 @@ class Retriever:
 
         for kwargs in candidates:
             try:
-                # Run synchronous store method in a thread to avoid blocking the event loop
-                result = await asyncio.to_thread(method, **kwargs)
-                normalized = self._normalize_results(result)
-                if normalized:
-                    return normalized
+                # Pick the first compatible signature, then invoke it exactly
+                # once. An empty result is a valid database response; retrying
+                # the same query with seven argument variants multiplied RDS
+                # timeouts and was a major cause of very slow answers.
+                inspect.signature(method).bind(**kwargs)
             except TypeError:
                 continue
+
+            try:
+                # Run synchronous store method in a thread to avoid blocking the event loop
+                result = await asyncio.to_thread(method, **kwargs)
+                return self._normalize_results(result)
+            except VectorSearchError:
+                raise
             except Exception:
-                continue
+                return []
 
         return []
 
@@ -191,6 +204,13 @@ class Retriever:
     async def retrieve(self, question: str, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
         self._ensure_loaded()
         k = top_k or self.settings.top_k
+
+        # Production/RDS fast path: one question -> one embedding -> one indexed
+        # nearest-neighbour query.  The former generic fallback loop called five
+        # overlapping methods for multiple query variants and also triggered
+        # LOWER(text) LIKE '%...%' full-table scans.
+        if getattr(self.vector_store, "use_pgvector", False):
+            return await self._call_store_method("search", question, k)
 
         query_variants = self._build_query_variants(question)
         keyword_query = self._keyword_query(question)

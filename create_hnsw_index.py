@@ -1,40 +1,127 @@
+"""Create the pgvector HNSW index with explicit, configurable resources.
+
+Run this during a maintenance window after the initial data load.  Defaults are
+conservative; size them from the RDS instance's free memory and vCPU count.
+"""
+
 import os
 import time
+
 import psycopg
 from dotenv import load_dotenv
+from psycopg import sql
 
 load_dotenv()
 
-# Lấy cấu hình kết nối từ .env
 PGHOST = os.getenv("PGHOST")
 PGDATABASE = os.getenv("PGDATABASE", "postgres")
 PGUSER = os.getenv("PGUSER", "postgres")
 PGPASSWORD = os.getenv("PGPASSWORD")
 PGPORT = os.getenv("PGPORT", "5432")
 
-conn_info = f"host={PGHOST} port={PGPORT} dbname={PGDATABASE} user={PGUSER} password={PGPASSWORD}"
+INDEX_NAME = os.getenv("HNSW_INDEX_NAME", "idx_legal_chunks_embedding_hnsw")
+MAINTENANCE_WORK_MEM = os.getenv("HNSW_MAINTENANCE_WORK_MEM", "1GB")
+PARALLEL_WORKERS = int(os.getenv("HNSW_PARALLEL_WORKERS", "2"))
+M = int(os.getenv("HNSW_M", "16"))
+EF_CONSTRUCTION = int(os.getenv("HNSW_EF_CONSTRUCTION", "64"))
+CONCURRENTLY = os.getenv("HNSW_CREATE_CONCURRENTLY", "0").lower() in (
+    "1", "true", "yes", "y"
+)
 
-print("🚀 Đang kết nối tới AWS RDS...")
-start_time = time.time()
+conn_info = (
+    f"host={PGHOST} port={PGPORT} dbname={PGDATABASE} "
+    f"user={PGUSER} password={PGPASSWORD} sslmode=require connect_timeout=10"
+)
 
-try:
-    # Kết nối với chế độ autocommit=True để không bị treo transaction
+
+def main() -> None:
+    print("🚀 Đang kết nối tới AWS RDS...")
+    started_at = time.time()
+
     with psycopg.connect(conn_info, autocommit=True) as conn:
         with conn.cursor() as cur:
-            print("⚙️ Cấu hình thông số tránh tràn RAM & tắt timeout...")
-            cur.execute("SET statement_timeout = 0;")
-            cur.execute("SET max_parallel_maintenance_workers = 0;")
-            cur.execute("SET maintenance_work_mem = '256MB';")
-            
-            print("⌛ Đang tạo HNSW Index cho 456k vectors... (Python sẽ kiên nhẫn chờ, không bị ngắt giữa chừng)")
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_legal_chunks_embedding 
-                ON legal_chunks 
-                USING hnsw (embedding vector_cosine_ops);
-            """)
-            
-            elapsed = time.time() - start_time
-            print(f"🎉 HOÀN THÀNH TẠO HNSW INDEX THÀNH CÔNG sau {elapsed/60:.2f} phút!")
+            cur.execute("SELECT set_config('statement_timeout', '0', false)")
+            cur.execute(
+                "SELECT set_config('maintenance_work_mem', %s, false)",
+                (MAINTENANCE_WORK_MEM,),
+            )
+            cur.execute(
+                "SELECT set_config('max_parallel_maintenance_workers', %s, false)",
+                (str(PARALLEL_WORKERS),),
+            )
 
-except Exception as e:
-    print(f"❌ Lỗi: {e}")
+            cur.execute(
+                """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = current_schema()
+                  AND tablename = 'legal_chunks'
+                ORDER BY indexname
+                """
+            )
+            existing = cur.fetchall()
+            for name, definition in existing:
+                print(f"ℹ️ Index hiện có: {name} -> {definition}")
+
+            cur.execute(
+                """
+                SELECT i.indisready, i.indisvalid
+                FROM pg_index i
+                JOIN pg_class c ON c.oid = i.indexrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = current_schema() AND c.relname = %s
+                """,
+                (INDEX_NAME,),
+            )
+            existing_status = cur.fetchone()
+            if existing_status and not all(existing_status):
+                raise RuntimeError(
+                    f"Index {INDEX_NAME} đang tồn tại nhưng invalid/unfinished. "
+                    "Hãy DROP INDEX trong maintenance window rồi chạy lại."
+                )
+            if existing_status:
+                print(f"✅ Index {INDEX_NAME} đã hợp lệ; không cần tạo lại.")
+                return
+
+            concurrent_sql = sql.SQL("CONCURRENTLY ") if CONCURRENTLY else sql.SQL("")
+            query = sql.SQL(
+                """
+                CREATE INDEX {concurrently}IF NOT EXISTS {index_name}
+                ON legal_chunks
+                USING hnsw (embedding vector_cosine_ops)
+                WITH (m = {m}, ef_construction = {ef_construction})
+                """
+            ).format(
+                concurrently=concurrent_sql,
+                index_name=sql.Identifier(INDEX_NAME),
+                m=sql.Literal(M),
+                ef_construction=sql.Literal(EF_CONSTRUCTION),
+            )
+
+            print(
+                "⌛ Tạo HNSW index "
+                f"(memory={MAINTENANCE_WORK_MEM}, workers={PARALLEL_WORKERS}, "
+                f"concurrently={CONCURRENTLY})..."
+            )
+            cur.execute(query)
+
+            cur.execute(
+                """
+                SELECT i.indisready, i.indisvalid, pg_size_pretty(pg_relation_size(c.oid))
+                FROM pg_index i
+                JOIN pg_class c ON c.oid = i.indexrelid
+                WHERE c.relname = %s
+                """,
+                (INDEX_NAME,),
+            )
+            status = cur.fetchone()
+            if not status or not status[0] or not status[1]:
+                raise RuntimeError(f"Index tạo xong nhưng chưa ready/valid: {status}")
+            print(f"✅ Index status (ready, valid, size): {status}")
+
+    elapsed = time.time() - started_at
+    print(f"🎉 Hoàn thành sau {elapsed / 60:.2f} phút")
+
+
+if __name__ == "__main__":
+    main()

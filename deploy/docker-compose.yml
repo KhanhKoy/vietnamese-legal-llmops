@@ -1,0 +1,14 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      APP_MODE: api
+      AUTH_DISABLED: "true"
+      ENABLE_API_DOCS: "true"
+    ports:
+      - "8000:8000"

@@ -17,5 +17,10 @@ boto3
 pypdf
 pgvector
 psycopg[binary]
-chainlit
+# Keep these versions together. Chainlit 2.11.1 imports Literal AI at startup.
+chainlit==2.11.1
+literalai==0.1.201
+cuid==0.4
+syncer==2.0.3
 google-genai
+PyJWT[crypto]

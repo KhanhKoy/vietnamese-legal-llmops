@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 import chainlit as cl
 
@@ -15,17 +14,20 @@ SRC_PATH = PROJECT_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
-from rag_core.document_manager import DocumentManager
-from rag_core.qa_service import QAService
+from rag_core.document_manager import DocumentManager  # noqa: E402
+from rag_core.qa_service import QAService  # noqa: E402
+from services.chat_history import ChatHistoryStore  # noqa: E402
 
 # Lấy tham số cấu hình từ môi trường
 DEFAULT_TOP_K = int(os.getenv("QA_TOP_K", "5"))
 
 
-# Callback xác thực tài khoản (Dùng test nhanh)
-@cl.password_auth_callback
+# Local-only password callback. Production should run behind Cognito/FastAPI;
+# there is intentionally no default password in source code.
 async def auth_callback(username: str, password: str):
-    if username == "admin" and password == "admin":
+    expected_user = os.getenv("CHAINLIT_DEV_USERNAME", "")
+    expected_password = os.getenv("CHAINLIT_DEV_PASSWORD", "")
+    if expected_user and expected_password and username == expected_user and password == expected_password:
         return cl.User(
             identifier=username,
             metadata={"role": "admin", "provider": "credentials"},
@@ -33,22 +35,42 @@ async def auth_callback(username: str, password: str):
     return None
 
 
+# Register local password authentication only when it is actually configured.
+# Otherwise Chainlit requires CHAINLIT_AUTH_SECRET and the blank credentials
+# make every login fail.
+if os.getenv("CHAINLIT_DEV_USERNAME") and os.getenv("CHAINLIT_DEV_PASSWORD"):
+    cl.password_auth_callback(auth_callback)
+
+
 @cl.on_chat_start
 async def start_chatbot():
     try:
-        # Khởi tạo QAService một lần duy nhất khi bắt đầu phiên chat
-        qa_service = QAService()
+        # Model embedding is expensive; share one initialized service across
+        # Chainlit sessions instead of loading it again for every browser tab.
+        qa_service = await asyncio.to_thread(get_qa_service)
         cl.user_session.set("qa_service", qa_service)
+
+        if os.getenv("ENABLE_CHAT_HISTORY", "0").lower() in {"1", "true", "yes", "y"}:
+            user = cl.user_session.get("user")
+            user_id = getattr(user, "identifier", "anonymous")
+            history = ChatHistoryStore()
+            conversation_id = await asyncio.to_thread(
+                history.create_conversation, user_id, "Cuộc trò chuyện Chainlit"
+            )
+            cl.user_session.set("history_store", history)
+            cl.user_session.set("conversation_id", conversation_id)
+            cl.user_session.set("history_user_id", user_id)
 
         await cl.Message(
             content=(
                 "⚖️ **Xin chào! Tôi là Trợ lý AI Tra cứu Pháp luật Việt Nam.**\n\n"
-                "Hệ thống đã kết nối thành công với Cơ sở dữ liệu **AWS RDS (pgvector)**.\n"
+                "Hệ thống tra cứu văn bản pháp luật đã sẵn sàng.\n"
                 "Bạn muốn tra cứu hoặc đặt câu hỏi về quy định pháp luật nào?"
             )
         ).send()
     except Exception as e:
-        await cl.Message(content=f"❌ Khởi tạo hệ thống thất bại: {str(e)}").send()
+        print(f"[Chainlit] initialization failed: {e}")
+        await cl.Message(content="❌ Khởi tạo hệ thống thất bại. Vui lòng thử lại sau.").send()
 
 
 @cl.on_message
@@ -67,10 +89,19 @@ async def handle_user_message(message: cl.Message):
     await loading_msg.send()
 
     try:
-        # 🌟 ĐIỂM SỬA MẤU CHỐT: Đưa qa_service.ask vào Thread riêng
-        # Giúp Event Loop của Chainlit không bị block bởi truy vấn SQL & Gemini API
+        history: ChatHistoryStore | None = cl.user_session.get("history_store")
+        conversation_id = cl.user_session.get("conversation_id")
+        history_user_id = cl.user_session.get("history_user_id")
+        if history and conversation_id and history_user_id:
+            await asyncio.to_thread(
+                history.append_message,
+                conversation_id,
+                history_user_id,
+                "user",
+                question,
+            )
+
         response = await qa_service.ask(
-            
             question=question,
             top_k=DEFAULT_TOP_K,
         )
@@ -80,6 +111,18 @@ async def handle_user_message(message: cl.Message):
 
         if not answer:
             answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
+
+        if history and conversation_id and history_user_id:
+            sources = [str(item.get("chunk_id")) for item in results if item.get("chunk_id")]
+            await asyncio.to_thread(
+                history.append_message,
+                conversation_id,
+                history_user_id,
+                "assistant",
+                answer,
+                sources,
+                response.get("latency_ms"),
+            )
 
         # 1. Cập nhật câu trả lời tổng hợp từ LLM
         loading_msg.content = answer
@@ -111,17 +154,26 @@ async def handle_user_message(message: cl.Message):
             await cl.Message(content=source_section).send()
 
     except Exception as e:
-        loading_msg.content = f"❌ Hệ thống gặp sự cố khi xử lý câu hỏi: {str(e)}"
+        print(f"[Chainlit] question handling failed: {e}")
+        loading_msg.content = "❌ Hệ thống gặp sự cố khi xử lý câu hỏi. Vui lòng thử lại."
         await loading_msg.update()
 
 
-# Khởi tạo manager phục vụ các tính năng Admin
-doc_manager = DocumentManager()
+@lru_cache(maxsize=1)
+def get_qa_service() -> QAService:
+    return QAService()
+
+
+@lru_cache(maxsize=1)
+def get_document_manager() -> DocumentManager:
+    # Do not load a second embedding model during normal chat startup. Admin
+    # dependencies are initialized only when the upload helper is actually used.
+    return DocumentManager()
 
 
 def handle_admin_upload(pdf_bytes, title_input, so_ky_hieu_input, is_proc_input):
     try:
-        new_id = doc_manager.add_document_from_pdf(
+        new_id = get_document_manager().add_document_from_pdf(
             pdf_file_bytes=pdf_bytes,
             title=title_input,
             so_ky_hieu=so_ky_hieu_input,
