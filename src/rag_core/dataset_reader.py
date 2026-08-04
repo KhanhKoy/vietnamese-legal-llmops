@@ -11,7 +11,7 @@ def iter_documents(
     content_batch_size: int = 64,
 ) -> Iterator[dict]:
     settings = get_settings()
-    hf_name = settings.hf_dataset_name.strip() or "NguyenKH/clean_legal_knowledge"
+    hf_name = settings.hf_dataset_name.strip() or "NguyenKH/core_legal_knowledge"
 
     print(f"🚀 Đang kết nối và tải dataset sạch từ HuggingFace: {hf_name}...")
     

@@ -31,7 +31,7 @@ with psycopg.connect(conn_info, autocommit=True) as conn:
             CREATE INDEX IF NOT EXISTS idx_legal_chunks_embedding 
             ON legal_chunks 
             USING ivfflat (embedding vector_cosine_ops) 
-            WITH (lists = 675);
+            WITH (lists = 1000);
         """)
         
         elapsed = time.time() - start_time
