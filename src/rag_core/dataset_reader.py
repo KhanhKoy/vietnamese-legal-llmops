@@ -23,14 +23,14 @@ def iter_documents(
         local_file_path = hf_hub_download(
             repo_id=hf_name,
             repo_type="dataset",
-            filename="data/clean_legal_knowledge.parquet"
+            filename="data/core_legal_knowledge.parquet"
         )
     except Exception:
         # Dự phòng nếu file nằm ở đường dẫn gốc
         local_file_path = hf_hub_download(
             repo_id=hf_name,
             repo_type="dataset",
-            filename="clean_legal_knowledge.parquet"
+            filename="core_legal_knowledge.parquet"
         )
 
     print(f"📦 Đã xác định file dữ liệu tại local: {local_file_path}")
