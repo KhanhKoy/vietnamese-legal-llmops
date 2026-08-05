@@ -10,6 +10,7 @@ class _FakeQAService:
             "answer": f"Trả lời: {question}",
             "results": [],
             "latency_ms": 12.5,
+            "timings_ms": {"total_ms": 12.5, "retrieval_ms": 2.0},
         }
 
 
@@ -29,6 +30,7 @@ def test_chat_works_without_dynamodb(monkeypatch):
     assert payload["conversation_id"]
     assert payload["answer"].startswith("Trả lời:")
     assert payload["latency_ms"] == 12.5
+    assert payload["timings_ms"]["retrieval_ms"] == 2.0
 
 
 def test_history_endpoint_explains_when_disabled(monkeypatch):

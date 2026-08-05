@@ -107,6 +107,7 @@ async def chat(payload: ChatRequest, user: CurrentUser = Depends(current_user)) 
         answer=answer,
         results=results,
         latency_ms=response.get("latency_ms"),
+        timings_ms=response.get("timings_ms", {}) or {},
     )
 
 

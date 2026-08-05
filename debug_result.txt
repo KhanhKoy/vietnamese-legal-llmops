@@ -1,0 +1,59 @@
+Result:\nquestion: các mức xử phạt đối với việc điều khiển phương tiện có nồng độ cồn\nanswer: Dựa trên Ngữ cảnh pháp luật được cung cấp, mức xử phạt đối với việc điều khiển phương tiện có nồng độ cồn được quy định như sau: Người điều khiển xe trên đường mà trong máu hoặc hơi thở có nồng độ cồn vượt quá 50 miligam đến 80 miligam/100 mililít máu hoặc vượt quá 0,25 miligam đến 0,4 miligam/1 lít khí thở sẽ bị phạt tiền từ 14.000.000 đồng đến 16.000.000 đồng. (Nghị định số 168/2024/NĐ-CP, Điều 8, Khoản 8, Điểm a) Lưu ý: Thông tin chỉ mang tính chất tham khảo, không phải là tư vấn pháp lý chính thức.\ntop_k: <class 'int'>\nresults: <class 'list'>\ncontext: Điều khiển xe trên đường mà trong máu hoặc hơi thở có nồng độ cồn nhưng chưa vượt quá 50 miligam/100 mililít máu hoặc chưa vượt quá 0,25 miligam/1 lít khí thở.
+7. Phạt tiền từ 6.000.000 đồng đến 8.000.000 đồng đối với người điều khiển xe thực hiện một trong các hành vi vi phạm sau đây:
+
+a) Không chú ý quan sát, điều khiển xe chạy quá tốc độ quy định gây tai nạn giao thông; dừng xe, đỗ xe, quay đầu xe, lùi xe, tránh xe, vượt xe, chuyển hướng, chuyển làn đường không đúng quy định gây tai nạn giao thông; không đi đúng phần đường, làn đường, không giữ khoảng cách an toàn giữa hai xe theo quy định gây tai nạn giao thông hoặc đi vào đường có biển báo hiệu có nội dung cấm đi vào đối với loại phương tiện đang điều khiển, đi ngược chiều của đường một chiều, đi ngược chiều trên đường có biển “Cấm đi ngược chiều” gây tai nạn giao thông, trừ các hành vi vi phạm quy định tại điểm a, điểm b khoản 8
+
+Điều này;
+b)
+
+Điều khiển xe trên đường mà trong máu hoặc hơi thở có nồng độ cồn vượt quá 50 miligam đến 80 miligam/100 mililít máu hoặc vượt quá 0,25 miligam đến 0,4 miligam/1 lít khí thở;
+b) Không chấp hành hiệu lệnh, hướng dẫn của người điều khiển giao thông hoặc người kiểm soát giao thông;
+
+c) Không chấp hành hiệu lệnh của đèn tín hiệu giao thông;
+
+d) Đi ngược chiều của đường một chiều, đi ngược chiều trên đường có biển “Cấm đi ngược chiều”, trừ các hành vi vi phạm quy định tại điểm đ khoản 9
+
+Điều này và các trường hợp xe ưu tiên đang đi làm nhiệm vụ khẩn cấp theo quy định.
+8. Phạt tiền từ 14.000.000 đồng đến 16.000.000 đồng đối với người điều khiển xe thực hiện một trong các hành vi vi phạm sau đây:
+
+a)\nprompt: Bạn là trợ lý tư vấn pháp luật Việt Nam chuyên nghiệp và chính xác.
+Nhiệm vụ của bạn là trả lời câu hỏi dựa TRỰC TIẾP và DUY NHẤT vào Ngữ cảnh văn bản pháp luật được cung cấp dưới đây.
+
+Quy tắc bắt buộc:
+1. Đọc kỹ tất cả các đoạn trích trong Ngữ cảnh để tổng hợp câu trả lời ĐẦY ĐỦ, CHI TIẾT và RÕ RÀNG nhất.
+2. Trích dẫn rõ nguồn pháp lý khi trả lời (Tên văn bản, Số ký hiệu, Điều/Khoản nếu có trong đoạn trích).
+3. Tuyệt đối KHÔNG tự bịa đặt thêm điều luật, số hiệu văn bản hoặc kiến thức bên ngoài Ngữ cảnh.
+4. Nếu trong Ngữ cảnh HOÀN TOÀN KHÔNG CHỨA THÔNG TIN để trả lời câu hỏi, bạn BẮT BUỘC phải trả lời chính xác câu sau:
+   "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
+5. Nêu rõ ở cuối câu trả lời: "Lưu ý: Thông tin chỉ mang tính chất tham khảo, không phải là tư vấn pháp lý chính thức."
+
+
+NGỮ CẢNH PHÁP LÝ ĐƯỢC CUNG CẤP:
+=== [Nguồn 1] ID: 140152 | Văn bản: Nghị định số 100/2019/NĐ-CP Quy định xử phạt vi phạm hành chính trong lĩnh vực giao thông đường bộ và đường sắt | Số hiệu: 100/2019/NĐ-CP | Loại: Nghị định | Cơ quan: Chính phủ (Score: 0.6061) ===
+Điều khiển xe trên đường mà trong máu hoặc hơi thở có nồng độ cồn nhưng chưa vượt quá 50 miligam/100 mililít máu hoặc chưa vượt quá 0,25 miligam/1 lít khí thở.
+7. Phạt tiền từ 6.000.000 đồng đến 8.000.000 đồng đối với người điều khiển xe thực hiện một trong các hành vi vi phạm sau đây:
+
+a) Không chú ý quan sát, điều khiển xe chạy quá tốc độ quy định gây tai nạn giao thông; dừng xe, đỗ xe, quay đầu xe, lùi xe, tránh xe, vượt xe, chuyển hướng, chuyển làn đường không đúng quy định gây tai nạn giao thông; không đi đúng phần đường, làn đường, không giữ khoảng cách an toàn giữa hai xe theo quy định gây tai nạn giao thông hoặc đi vào đường có biển báo hiệu có nội dung cấm đi vào đối với loại phương tiện đang điều khiển, đi ngược chiều của đường một chiều, đi ngược chiều trên đường có biển “Cấm đi ngược chiều” gây tai nạn giao thông, trừ các hành vi vi phạm quy định tại điểm a, điểm b khoản 8
+
+Điều này;
+b)
+
+---
+
+=== [Nguồn 2] ID: 173920 | Văn bản: Nghị định số 168/2024/NĐ-CP Quy định xử phạt vi phạm hành chính về trật tự, an toàn giao thông trong lĩnh vực giao thông đường bộ; trừ điểm, phục hồi điểm giấy phép lái xe | Số hiệu: 168/2024/NĐ-CP | Loại: Nghị định | Cơ quan: Chính phủ (Score: 0.5905) ===
+Điều khiển xe trên đường mà trong máu hoặc hơi thở có nồng độ cồn vượt quá 50 miligam đến 80 miligam/100 mililít máu hoặc vượt quá 0,25 miligam đến 0,4 miligam/1 lít khí thở;
+b) Không chấp hành hiệu lệnh, hướng dẫn của người điều khiển giao thông hoặc người kiểm soát giao thông;
+
+c) Không chấp hành hiệu lệnh của đèn tín hiệu giao thông;
+
+d) Đi ngược chiều của đường một chiều, đi ngược chiều trên đường có biển “Cấm đi ngược chiều”, trừ các hành vi vi phạm quy định tại điểm đ khoản 9
+
+Điều này và các trường hợp xe ưu tiên đang đi làm nhiệm vụ khẩn cấp theo quy định.
+8. Phạt tiền từ 14.000.000 đồng đến 16.000.000 đồng đối với người điều khiển xe thực hiện một trong các hành vi vi phạm sau đây:
+
+a)
+
+CÂU HỎI CỦA NGƯỜI DÙNG:
+các mức xử phạt đối với việc điều khiển phương tiện có nồng độ cồn
+
+CÂU TRẢ LỜI:\nquery_variants: <class 'list'>\noptimized_query: mức xử phạt đối việc điều khiển phương tiện nồng độ cồn\nlatency_ms: <class 'float'>\ntimings_ms: <class 'dict'>\n

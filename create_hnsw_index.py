@@ -23,7 +23,7 @@ INDEX_NAME = os.getenv("HNSW_INDEX_NAME", "idx_legal_chunks_embedding_hnsw")
 MAINTENANCE_WORK_MEM = os.getenv("HNSW_MAINTENANCE_WORK_MEM", "1GB")
 PARALLEL_WORKERS = int(os.getenv("HNSW_PARALLEL_WORKERS", "0"))
 M = int(os.getenv("HNSW_M", "16"))
-EF_CONSTRUCTION = int(os.getenv("HNSW_EF_CONSTRUCTION", "64"))
+EF_CONSTRUCTION = int(os.getenv("HNSW_EF_CONSTRUCTION", "32"))
 CONCURRENTLY = os.getenv("HNSW_CREATE_CONCURRENTLY", "0").lower() in (
     "1", "true", "yes", "y"
 )

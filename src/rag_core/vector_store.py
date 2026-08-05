@@ -5,6 +5,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -25,7 +26,7 @@ class VectorSearchError(RuntimeError):
 
 
 class VectorIndexMissingError(VectorSearchError):
-    """Raised when a large pgvector table has no usable ANN index."""
+    """Raised only when REQUIRE_VECTOR_INDEX explicitly forbids exact search."""
 
 
 class VectorSearchTimeoutError(VectorSearchError):
@@ -39,6 +40,7 @@ class VectorStore:
         self.embedder = embedder or EmbeddingService()
         self.embed_dim = self.embedder.dimension  # dimension of embedding vectors
         self._pg_lock = threading.RLock()
+        self.last_search_timings_ms: Dict[str, Any] = {}
 
         if self.use_pgvector:
             import psycopg
@@ -414,7 +416,7 @@ class VectorStore:
         with self._pg_lock:
             if not self.vector_index_available:
                 self.vector_index_available = self._has_usable_vector_index()
-            require_index = os.getenv("REQUIRE_VECTOR_INDEX", "true").lower() in {
+            require_index = os.getenv("REQUIRE_VECTOR_INDEX", "false").lower() in {
                 "1",
                 "true",
                 "yes",
@@ -422,7 +424,7 @@ class VectorStore:
             }
             if require_index and not self.vector_index_available:
                 raise VectorIndexMissingError(
-                    "Bảng legal_chunks chưa có HNSW/IVFFlat index hợp lệ; "
+                    "Bảng legal_chunks chưa có vector index hợp lệ; "
                     "đã từ chối full-table vector scan."
                 )
             return self._search_by_vector_locked(query_vector, top_k, filters)
@@ -434,6 +436,7 @@ class VectorStore:
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Tìm kiếm k-NN vector tương đồng trong PostgreSQL pgvector bằng query_vector (dạng list float)."""
+        db_started_at = time.perf_counter()
         try:
             if hasattr(self.conn, "info") and self.conn.info.transaction_status == 3:
                 self.conn.rollback()
@@ -506,9 +509,25 @@ class VectorStore:
                     })
 
             self.conn.commit()
+            self.last_search_timings_ms.update(
+                {
+                    "db_search_ms": round((time.perf_counter() - db_started_at) * 1000, 2),
+                    "vector_index_available": self.vector_index_available,
+                    "exact_vector_scan": not self.vector_index_available,
+                    "top_k": top_k,
+                    "result_count": len(results),
+                }
+            )
             return results
 
         except Exception as e:
+            self.last_search_timings_ms.update(
+                {
+                    "db_search_ms": round((time.perf_counter() - db_started_at) * 1000, 2),
+                    "vector_index_available": self.vector_index_available,
+                    "exact_vector_scan": not self.vector_index_available,
+                }
+            )
             if self.conn:
                 self.conn.rollback()
             if getattr(e, "sqlstate", None) == "57014" or "statement timeout" in str(
@@ -525,9 +544,17 @@ class VectorStore:
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
+        embed_started_at = time.perf_counter()
         q_emb = self.embedder.embed_query(query)
+        embedding_ms = round((time.perf_counter() - embed_started_at) * 1000, 2)
         q_emb_f32 = np.asarray(q_emb, dtype=np.float32).tolist()
-        return self.search_by_vector(query_vector=q_emb_f32, top_k=top_k, filters=filters)
+        results = self.search_by_vector(query_vector=q_emb_f32, top_k=top_k, filters=filters)
+        self.last_search_timings_ms["embedding_ms"] = embedding_ms
+        self.last_search_timings_ms["vector_total_ms"] = round(
+            embedding_ms + float(self.last_search_timings_ms.get("db_search_ms", 0.0)),
+            2,
+        )
+        return results
 
     def _search_faiss(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         q_emb = self.embedder.embed_query(query)

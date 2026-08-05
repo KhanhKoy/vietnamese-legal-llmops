@@ -16,6 +16,7 @@ class ChatResponse(BaseModel):
     answer: str
     results: List[Dict[str, Any]] = Field(default_factory=list)
     latency_ms: Optional[float] = None
+    timings_ms: Dict[str, Any] = Field(default_factory=dict)
 
 
 class DocumentUploadRequest(BaseModel):

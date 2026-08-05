@@ -437,7 +437,8 @@ The current implementation checklist is maintained in
 
 - FastAPI backend: `python scripts/run_api.py`
 - Chainlit compatibility UI: `chainlit run app.py`
-- HNSW build: `python create_hnsw_index.py`
+- QA latency benchmark: `python scripts/benchmark_qa.py`
+- Optional ANN index build: `python create_hnsw_index.py`
 - AWS foundation template: `infra/foundation.yaml`
 - PostgreSQL admin-domain migration: `migrations/001_admin_domain.sql`
 

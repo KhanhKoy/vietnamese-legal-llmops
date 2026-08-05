@@ -14,11 +14,11 @@ Tài liệu này chia công việc thành hai luồng. Trạng thái **đã làm
 - [x] Tắt reranker mặc định; chỉ bật sau khi đo CPU/latency.
 - [x] Thêm timeout kết nối, SQL retrieval và LLM.
 - [x] Thêm tổng thời gian `latency_ms` vào response.
-- [x] Đổi script HNSW sang tên index riêng, worker/memory cấu hình qua environment.
-- [ ] Đợi/tạo xong HNSW trên RDS.
-- [ ] Chạy `ANALYZE legal_chunks` sau khi index hoàn thành.
-- [ ] Dùng `EXPLAIN (ANALYZE, BUFFERS)` xác nhận `Index Scan` thay vì `Seq Scan`.
-- [ ] Benchmark tối thiểu 20 câu: p50, p95, max cho embedding/RDS/LLM/tổng.
+- [x] Thêm `timings_ms` theo stage: retrieval, embedding, DB search, rerank, LLM, tổng.
+- [x] Không bắt buộc HNSW/IVFFlat; exact pgvector search được phép khi `REQUIRE_VECTOR_INDEX=false`.
+- [ ] Chạy `ANALYZE legal_chunks` sau mỗi lượt nạp dữ liệu lớn.
+- [ ] Benchmark tối thiểu 20 câu bằng `scripts/benchmark_qa.py`: p50, p95, max cho embedding/RDS/LLM/tổng.
+- [ ] Nếu exact search vượt ngưỡng latency mong muốn, cân nhắc IVFFlat/HNSW như tối ưu tùy chọn.
 
 ### P1 — sau khi đường cơ bản ổn định
 
@@ -26,7 +26,7 @@ Tài liệu này chia công việc thành hai luồng. Trạng thái **đã làm
 - [ ] Nếu cần keyword search, tạo PostgreSQL full-text/GIN hoặc pg_trgm; không khôi phục full scan cũ.
 - [ ] Thêm structured logging theo stage thay cho `print`.
 - [ ] Thêm connection pool/RDS Proxy khi có nhiều API/Lambda worker.
-- [ ] So sánh recall của HNSW với exact search trước khi tăng tốc thêm.
+- [ ] So sánh recall/latency của exact search với IVFFlat/HNSW nếu sau này cần ANN index.
 - [ ] Bật lại reranker và query rewrite từng tính năng, benchmark riêng trước/sau.
 
 ## B. Áp dụng kiến trúc AWS mới
@@ -66,7 +66,7 @@ Tài liệu này chia công việc thành hai luồng. Trạng thái **đã làm
 
 ## Thứ tự rollout
 
-1. Deploy bản sửa performance và xác minh HNSW bằng `EXPLAIN`.
+1. Deploy bản sửa performance, chạy `ANALYZE legal_chunks` và benchmark exact pgvector search.
 2. Deploy FastAPI ở môi trường dev với `AUTH_DISABLED=true`; không dùng cờ này ở staging/production.
 3. Deploy Cognito/DynamoDB/S3/SQS, cấu hình các environment output từ stack.
 4. Bật Cognito, kiểm tra quyền User/Editor/Admin.

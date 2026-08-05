@@ -218,6 +218,7 @@ class QAService:
 
     async def ask(self, question: str, top_k: Optional[int] = None) -> Dict[str, Any]:
         started_at = time.perf_counter()
+        timings_ms: Dict[str, Any] = {}
         top_k = top_k or 5
         question = self._normalize_text(question)
 
@@ -245,6 +246,7 @@ class QAService:
                 variants.append(optimized_query)
 
         retrievals: List[Dict[str, Any]] = []
+        retrieval_started_at = time.perf_counter()
         for variant in variants:
             try:
                 retrieval = await asyncio.wait_for(
@@ -258,8 +260,9 @@ class QAService:
                     variants,
                     optimized_query or broadened,
                     "VECTOR_INDEX_MISSING",
-                    "Cơ sở dữ liệu chưa có HNSW/IVFFlat index hợp lệ nên tra cứu vector đã bị tạm dừng.",
+                    "Cơ sở dữ liệu chưa có vector index hợp lệ và exact search đang bị tắt.",
                     started_at,
+                    timings_ms,
                 )
             except VectorSearchTimeoutError:
                 return self._retrieval_error_response(
@@ -270,16 +273,22 @@ class QAService:
                     "VECTOR_SEARCH_TIMEOUT",
                     "Truy vấn cơ sở dữ liệu đã quá thời gian cho phép. Vui lòng thử lại sau.",
                     started_at,
+                    timings_ms,
                 )
             except asyncio.TimeoutError:
                 retrieval = {"results": [], "context": "", "top_k": candidate_k}
             if retrieval.get("results"):
                 retrievals.append(retrieval)
+        timings_ms["retrieval_ms"] = round((time.perf_counter() - retrieval_started_at) * 1000, 2)
+        vector_timings = getattr(getattr(self.retriever, "vector_store", None), "last_search_timings_ms", {})
+        if isinstance(vector_timings, dict) and vector_timings:
+            timings_ms.update(vector_timings)
 
         merged_results = self._merge_results(retrievals)
 
         # Fallback search nếu chưa ra kết quả
         if not merged_results and broadened:
+            fallback_started_at = time.perf_counter()
             try:
                 fallback = await asyncio.wait_for(
                     self._retrieve(broadened, top_k=candidate_k * 2),
@@ -289,10 +298,18 @@ class QAService:
                 fallback = {"results": [], "context": "", "top_k": candidate_k * 2}
             if fallback.get("results"):
                 merged_results = fallback.get("results", [])
+            timings_ms["fallback_retrieval_ms"] = round(
+                (time.perf_counter() - fallback_started_at) * 1000,
+                2,
+            )
+            vector_timings = getattr(getattr(self.retriever, "vector_store", None), "last_search_timings_ms", {})
+            if isinstance(vector_timings, dict) and vector_timings:
+                timings_ms.update(vector_timings)
 
         # 🎯 CHUẨN HÓA CÂU TRẢ LỜI KHI KHÔNG TÌM THẤY THÔNG TIN
         if not merged_results:
             fallback_answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
+            timings_ms["total_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
             return {
                 "question": question,
                 "answer": fallback_answer,
@@ -302,23 +319,29 @@ class QAService:
                 "prompt": "",
                 "query_variants": variants,
                 "optimized_query": optimized_query or broadened,
-                "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "latency_ms": timings_ms["total_ms"],
+                "timings_ms": timings_ms,
             }
 
         # 🌟 ĐIỂM NÂNG CẤP MỚI: Tiến hành Re-rank danh sách ứng viên thu được
+        rerank_started_at = time.perf_counter()
         final_results = await asyncio.to_thread(
             self.reranker.rerank,
             query=question,
             documents=merged_results,
             top_k=top_k,
         )
+        timings_ms["rerank_ms"] = round((time.perf_counter() - rerank_started_at) * 1000, 2)
 
         prompt = build_prompt(question, final_results)
+        llm_started_at = time.perf_counter()
         answer = await self._safe_generate(prompt, default="")
+        timings_ms["llm_ms"] = round((time.perf_counter() - llm_started_at) * 1000, 2)
 
         if not self._normalize_text(answer):
             answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
 
+        timings_ms["total_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
         response = {
             "question": question,
             "answer": answer,
@@ -328,10 +351,18 @@ class QAService:
             "prompt": prompt,
             "query_variants": variants,
             "optimized_query": optimized_query or broadened,
-            "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
+            "latency_ms": timings_ms["total_ms"],
+            "timings_ms": timings_ms,
         }
         # ASCII log prefix also works on Windows consoles configured with cp1252.
-        print(f"[QA] total_latency_ms={response['latency_ms']}")
+        print(
+            "[QA] "
+            f"total_ms={timings_ms.get('total_ms')} "
+            f"retrieval_ms={timings_ms.get('retrieval_ms')} "
+            f"embedding_ms={timings_ms.get('embedding_ms')} "
+            f"db_search_ms={timings_ms.get('db_search_ms')} "
+            f"llm_ms={timings_ms.get('llm_ms')}"
+        )
         return response
 
     @staticmethod
@@ -343,7 +374,10 @@ class QAService:
         error_code: str,
         message: str,
         started_at: float,
+        timings_ms: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        timings = dict(timings_ms or {})
+        timings["total_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
         return {
             "question": question,
             "answer": message,
@@ -354,5 +388,6 @@ class QAService:
             "query_variants": variants,
             "optimized_query": optimized_query,
             "error_code": error_code,
-            "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
+            "latency_ms": timings["total_ms"],
+            "timings_ms": timings,
         }

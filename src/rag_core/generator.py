@@ -12,13 +12,14 @@ class GeneratorService:
     def __init__(
         self,
         model_name: Optional[str] = None,
-        max_new_tokens: int = 1024,
-        temperature: float = 0.0,
+        max_new_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
     ) -> None:
         self.settings = get_settings()
         self.provider = os.getenv("LLM_PROVIDER", "gemini").lower()
-        self.max_new_tokens = max_new_tokens
-        self.temperature = temperature
+        # Read from environment with fallbacks
+        self.max_new_tokens = int(max_new_tokens if max_new_tokens is not None else os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "1024"))
+        self.temperature = float(temperature if temperature is not None else os.getenv("GEMINI_TEMPERATURE", "0.0"))
 
         if self.provider == "bedrock":
             import boto3
@@ -50,8 +51,8 @@ class GeneratorService:
             raise ValueError("❌ Không tìm thấy GEMINI_API_KEY trong file .env.")
         self.client = genai.Client(api_key=api_key)
         self.generation_config = types.GenerateContentConfig(
-            max_output_tokens=max_new_tokens,
-            temperature=temperature,
+            max_output_tokens=self.max_new_tokens,
+            temperature=self.temperature,
         )
 
     def generate(self, prompt: str) -> str:
@@ -81,4 +82,5 @@ class GeneratorService:
             # Do not present transport/authentication failures as a legal answer
             # or leak provider details to the client.
             print(f"[Generator] {self.provider} request failed: {exc}")
+            # Optionally re-raise for debugging? We'll keep returning empty.
             return ""
