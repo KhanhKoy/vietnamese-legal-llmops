@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Iterator, Optional
 
 from .config import get_settings
 
@@ -13,26 +11,26 @@ def iter_documents(
     content_batch_size: int = 64,
 ) -> Iterator[dict]:
     settings = get_settings()
-    hf_name = settings.hf_dataset_name.strip() or "NguyenKH/clean_legal_knowledge"
+    hf_name = settings.hf_dataset_name.strip() or "NguyenKH/core_legal_knowledge"
 
     print(f"🚀 Đang kết nối và tải dataset sạch từ HuggingFace: {hf_name}...")
     
-    from huggingface_hub import hf_hub_download
     import pyarrow.parquet as pq
+    from huggingface_hub import hf_hub_download
 
     # Tải file parquet trực tiếp từ Hugging Face Repo của bạn
     try:
         local_file_path = hf_hub_download(
             repo_id=hf_name,
             repo_type="dataset",
-            filename="data/clean_legal_knowledge.parquet"
+            filename="data/core_legal_knowledge.parquet"
         )
     except Exception:
         # Dự phòng nếu file nằm ở đường dẫn gốc
         local_file_path = hf_hub_download(
             repo_id=hf_name,
             repo_type="dataset",
-            filename="clean_legal_knowledge.parquet"
+            filename="core_legal_knowledge.parquet"
         )
 
     print(f"📦 Đã xác định file dữ liệu tại local: {local_file_path}")

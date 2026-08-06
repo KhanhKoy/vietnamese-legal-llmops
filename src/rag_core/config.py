@@ -18,7 +18,7 @@ VECTOR_STORE_DIR = MODEL_DIR / "vector_store"
 @dataclass(frozen=True)
 class Settings:
     # Hugging Face dataset sạch mới
-    hf_dataset_name: str = os.getenv("HF_DATASET_NAME", "NguyenKH/clean_legal_knowledge")
+    hf_dataset_name: str = os.getenv("HF_DATASET_NAME", "NguyenKH/core_legal_knowledge")
     
     # Text chunking (Giữ kích thước chunk phù hợp với văn bản luật Markdown)
     chunk_size_chars: int = int(os.getenv("CHUNK_SIZE_CHARS", "1200"))

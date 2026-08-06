@@ -4,9 +4,10 @@ import json
 import os
 import re
 import sqlite3
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-
 
 import numpy as np
 
@@ -20,18 +21,34 @@ VIETNAMESE_STOPWORDS = {
 }
 
 
+class VectorSearchError(RuntimeError):
+    """Base error for an unavailable PostgreSQL vector search."""
+
+
+class VectorIndexMissingError(VectorSearchError):
+    """Raised only when REQUIRE_VECTOR_INDEX explicitly forbids exact search."""
+
+
+class VectorSearchTimeoutError(VectorSearchError):
+    """Raised when PostgreSQL cancels vector search at statement_timeout."""
+
+
 class VectorStore:
     def __init__(self, storage_dir: Optional[Path] = None, embedder: Optional[EmbeddingService] = None) -> None:
         self.settings = get_settings()
         self.use_pgvector = os.getenv("USE_PGVECTOR", "0").lower() in ("1", "true", "yes", "y")
         self.embedder = embedder or EmbeddingService()
         self.embed_dim = self.embedder.dimension  # dimension of embedding vectors
+        self._pg_lock = threading.RLock()
+        self.last_search_timings_ms: Dict[str, Any] = {}
 
         if self.use_pgvector:
             import psycopg
             from pgvector.psycopg import register_vector
 
             sslmode = os.getenv("PGSSLMODE", "require")
+            connect_timeout = int(os.getenv("PG_CONNECT_TIMEOUT_SECONDS", "10"))
+            self.pg_query_timeout_ms = int(os.getenv("PG_QUERY_TIMEOUT_MS", "10000"))
             self.conn = psycopg.connect(
                 host=self.settings.pg_host,
                 port=self.settings.pg_port,
@@ -39,17 +56,36 @@ class VectorStore:
                 password=self.settings.pg_password,
                 dbname=self.settings.pg_database,
                 sslmode=sslmode,
+                connect_timeout=connect_timeout,
                 autocommit=False,
             )
 
-            # Kích hoạt extension pgvector trước
+            # Avoid repeated table/index DDL on every API process start. DDL can
+            # wait behind locks on a busy RDS instance and delay the first chat.
             with self.conn.cursor() as cur:
-                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_extension WHERE extname = 'vector'
+                    ), to_regclass('legal_chunks') IS NOT NULL
+                    """
+                )
+                schema_status = cur.fetchone()
+                if schema_status is None or len(schema_status) < 2:
+                    raise RuntimeError(
+                        "Không đọc được trạng thái extension/table từ PostgreSQL"
+                    )
+                extension_exists = bool(schema_status[0])
+                table_exists = bool(schema_status[1])
+                if not extension_exists:
+                    cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
             self.conn.commit()
 
-            # Đăng ký vector và tạo bảng
+            # Đăng ký vector và chỉ tạo schema khi DB còn trống.
             register_vector(self.conn)
-            self._init_postgres()
+            if not table_exists:
+                self._init_postgres()
+            self.vector_index_available = self._has_usable_vector_index()
         else:
             import faiss
 
@@ -103,6 +139,30 @@ class VectorStore:
 
             cur.execute(create_table_query)
         self.conn.commit()
+
+    def _has_usable_vector_index(self) -> bool:
+        if not self.use_pgvector or not self.conn:
+            return False
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_index i
+                    JOIN pg_class idx ON idx.oid = i.indexrelid
+                    JOIN pg_class tbl ON tbl.oid = i.indrelid
+                    JOIN pg_namespace n ON n.oid = tbl.relnamespace
+                    WHERE n.nspname = current_schema()
+                      AND tbl.relname = 'legal_chunks'
+                      AND i.indisready
+                      AND i.indisvalid
+                      AND pg_get_indexdef(idx.oid) ~* 'USING (hnsw|ivfflat).*embedding'
+                )
+                """
+            )
+            row = cur.fetchone()
+        self.conn.commit()
+        return bool(row and row[0])
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", (text or "").strip())
@@ -266,7 +326,6 @@ class VectorStore:
                 for i in range(0, len(records), batch_size):
                     batch = records[i : i + batch_size]
                     cur.executemany(query, batch)
-                self.conn.commit()
             finally:
                 cur.close()
             return
@@ -351,10 +410,33 @@ class VectorStore:
         top_k: int = 5,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """Tìm kiếm k-NN vector tương đồng trong PostgreSQL pgvector bằng query_vector (dạng list float)."""
         if not self.use_pgvector or not self.conn:
             return []
 
+        with self._pg_lock:
+            if not self.vector_index_available:
+                self.vector_index_available = self._has_usable_vector_index()
+            require_index = os.getenv("REQUIRE_VECTOR_INDEX", "false").lower() in {
+                "1",
+                "true",
+                "yes",
+                "y",
+            }
+            if require_index and not self.vector_index_available:
+                raise VectorIndexMissingError(
+                    "Bảng legal_chunks chưa có vector index hợp lệ; "
+                    "đã từ chối full-table vector scan."
+                )
+            return self._search_by_vector_locked(query_vector, top_k, filters)
+
+    def _search_by_vector_locked(
+        self,
+        query_vector: List[float],
+        top_k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Tìm kiếm k-NN vector tương đồng trong PostgreSQL pgvector bằng query_vector (dạng list float)."""
+        db_started_at = time.perf_counter()
         try:
             if hasattr(self.conn, "info") and self.conn.info.transaction_status == 3:
                 self.conn.rollback()
@@ -372,7 +454,11 @@ class VectorStore:
 
             where_sql = ""
             if where_clauses:
-                where_sql = "WHERE " + " AND ".join(where_clauses)
+                where_sql = "WHERE NOT (metadata_json ? 'deleted_at') AND " + " AND ".join(where_clauses)
+            else:
+                # Admin delete is a recoverable soft delete. Hidden documents
+                # must never be returned to the RAG pipeline.
+                where_sql = "WHERE NOT (metadata_json ? 'deleted_at')"
 
             params.append(top_k)
 
@@ -393,6 +479,10 @@ class VectorStore:
 
             results = []
             with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('statement_timeout', %s, true)",
+                    (str(self.pg_query_timeout_ms),),
+                )
                 cur.execute(sql, params)
                 rows = cur.fetchall()
 
@@ -418,13 +508,35 @@ class VectorStore:
                         "score": similarity_score,
                     })
 
+            self.conn.commit()
+            self.last_search_timings_ms.update(
+                {
+                    "db_search_ms": round((time.perf_counter() - db_started_at) * 1000, 2),
+                    "vector_index_available": self.vector_index_available,
+                    "exact_vector_scan": not self.vector_index_available,
+                    "top_k": top_k,
+                    "result_count": len(results),
+                }
+            )
             return results
 
         except Exception as e:
+            self.last_search_timings_ms.update(
+                {
+                    "db_search_ms": round((time.perf_counter() - db_started_at) * 1000, 2),
+                    "vector_index_available": self.vector_index_available,
+                    "exact_vector_scan": not self.vector_index_available,
+                }
+            )
             if self.conn:
                 self.conn.rollback()
-            print(f"❌ Lỗi khi search_by_vector: {e}")
-            return []
+            if getattr(e, "sqlstate", None) == "57014" or "statement timeout" in str(
+                e
+            ).lower():
+                raise VectorSearchTimeoutError(
+                    f"Truy vấn vector vượt quá {self.pg_query_timeout_ms} ms"
+                ) from e
+            raise VectorSearchError(f"Truy vấn vector thất bại: {e}") from e
 
     def _search_pgvector(
         self,
@@ -432,9 +544,17 @@ class VectorStore:
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
+        embed_started_at = time.perf_counter()
         q_emb = self.embedder.embed_query(query)
+        embedding_ms = round((time.perf_counter() - embed_started_at) * 1000, 2)
         q_emb_f32 = np.asarray(q_emb, dtype=np.float32).tolist()
-        return self.search_by_vector(query_vector=q_emb_f32, top_k=top_k, filters=filters)
+        results = self.search_by_vector(query_vector=q_emb_f32, top_k=top_k, filters=filters)
+        self.last_search_timings_ms["embedding_ms"] = embedding_ms
+        self.last_search_timings_ms["vector_total_ms"] = round(
+            embedding_ms + float(self.last_search_timings_ms.get("db_search_ms", 0.0)),
+            2,
+        )
+        return results
 
     def _search_faiss(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         q_emb = self.embedder.embed_query(query)
@@ -447,9 +567,13 @@ class VectorStore:
 
         assert self.index is not None
         q_reshaped = q_emb_f32.reshape(1, -1)
-        D, I = self.index.search(q_reshaped, top_k)  # type: ignore
+        distances, indices = self.index.search(q_reshaped, top_k)  # type: ignore
 
-        row_ids = [self._safe_int(i) + 1 for i in I[0].tolist() if self._safe_int(i) >= 0]
+        row_ids = [
+            self._safe_int(i) + 1
+            for i in indices[0].tolist()
+            if self._safe_int(i) >= 0
+        ]
         if not row_ids:
             return []
 
@@ -483,7 +607,9 @@ class VectorStore:
             except Exception:
                 metadata = {}
 
-            score = float(D[0][rank]) if rank < len(D[0]) else 0.0
+            score = (
+                float(distances[0][rank]) if rank < len(distances[0]) else 0.0
+            )
             results.append(
                 {
                     "chunk_id": chunk_id,
@@ -661,6 +787,9 @@ class VectorStore:
         return final_results[:top_k]
 
     def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        # Nếu dùng pgvector, chỉ cần search_by_vector để tránh bị treo bởi câu lệnh LIKE
+        if self.use_pgvector:
+            return self.search(query=query, top_k=top_k)
         return self.hybrid_search(query=query, top_k=top_k)
 
     def query(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
@@ -727,8 +856,9 @@ class VectorStore:
                     json.dumps(updates, ensure_ascii=False),
                     document_id
                 ))
+                updated = cur.rowcount
             self.conn.commit()
-            return True
+            return updated > 0
         except Exception as e:
             if self.conn:
                 self.conn.rollback()
@@ -747,13 +877,49 @@ class VectorStore:
         try:
             with self.conn.cursor() as cur:
                 cur.execute(sql, (document_id,))
+                deleted = cur.rowcount
             self.conn.commit()
-            return True
+            return deleted > 0
         except Exception as e:
             if self.conn:
                 self.conn.rollback()
             print(f"❌ Lỗi khi xóa document: {e}")
             return False
+
+    def list_documents(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Return one representative metadata record per document for admin UI."""
+        if not self.use_pgvector:
+            return []
+
+        sql = """
+            SELECT DISTINCT ON (document_id)
+                document_id, metadata_json,
+                COUNT(*) OVER (PARTITION BY document_id) AS chunk_count
+            FROM legal_chunks
+            WHERE NOT (metadata_json ? 'deleted_at')
+            ORDER BY document_id, id
+            LIMIT %s OFFSET %s;
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('statement_timeout', %s, true)",
+                    (str(self.pg_query_timeout_ms),),
+                )
+                cur.execute(sql, (max(1, min(limit, 200)), max(0, offset)))
+                rows = cur.fetchall()
+            self.conn.commit()
+            return [
+                {
+                    "document_id": row[0],
+                    "metadata": row[1] if isinstance(row[1], dict) else {},
+                    "chunk_count": int(row[2]),
+                }
+                for row in rows
+            ]
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_existing_chunk_ids(self) -> set[str]:
         """Lấy toàn bộ danh sách chunk_id đã có trong Database (Postgres hoặc SQLite)."""

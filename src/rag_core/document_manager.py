@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, Optional
+from typing import Optional
+
 import pypdf
 
 from .chunking import chunk_document
@@ -15,8 +16,8 @@ class DocumentManager:
         vector_store: Optional[VectorStore] = None,
         embedder: Optional[EmbeddingService] = None,
     ):
-        self.vector_store = vector_store or VectorStore()
         self.embedder = embedder or EmbeddingService()
+        self.vector_store = vector_store or VectorStore(embedder=self.embedder)
 
     def extract_text_from_pdf(self, pdf_file_bytes) -> str:
         """Trích xuất nội dung text từ file PDF"""
@@ -121,5 +122,16 @@ class DocumentManager:
     
     
     def delete_document(self, document_id: str) -> bool:
-        """Xóa văn bản khỏi DB"""
-        return self.vector_store.delete_document_by_id(document_id)
+        """Soft-delete a document so it can be audited/restored."""
+        from datetime import datetime, timezone
+
+        return self.vector_store.update_document_metadata(
+            document_id=document_id,
+            updates={
+                "deleted_at": datetime.now(timezone.utc).isoformat(),
+                "tinh_trang_hieu_luc": "Đã ẩn",
+            },
+        )
+
+    def list_documents(self, limit: int = 50, offset: int = 0):
+        return self.vector_store.list_documents(limit=limit, offset=offset)

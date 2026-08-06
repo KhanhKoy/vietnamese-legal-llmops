@@ -113,7 +113,7 @@ def split_text(text: str) -> List[str]:
     return final_chunks
 
 def chunk_document(document: Dict[str, Any]) -> List[Chunk]:
-    """
+    """ 
     Split a single document into chunks.
     Expected document dict keys: document_id, text, metadata.
     """

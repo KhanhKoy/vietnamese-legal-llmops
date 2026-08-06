@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import gc
+import os
 from typing import Any, Dict, Optional
 
 from .chunking import chunk_document
@@ -15,13 +15,16 @@ def build_index_pipeline(
     vector_store: Optional[VectorStore] = None,
     embedder: Optional[EmbeddingService] = None,
     document_batch_size: int = 32,
-    commit_interval: int = 100,
+    commit_interval: int = 0,
 ) -> VectorStore:
     """
     Build vector index with streaming to keep RAM usage bounded,
     và tự động bỏ qua các chunks đã có sẵn trên AWS RDS để hỗ trợ chạy tiếp nối.
     """
     # Determine embedder to use
+    if commit_interval <= 0:
+        commit_interval = max(1, int(os.getenv("INDEX_COMMIT_INTERVAL", "1000")))
+
     if embedder is None:
         if vector_store is not None and hasattr(vector_store, "embedder") and vector_store.embedder is not None:
             embedder = vector_store.embedder

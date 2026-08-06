@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 from .generator import GeneratorService
 from .prompt import build_prompt
 from .reranker import RerankerService  # 👈 Import RerankerService mới
 from .retriever import Retriever
+from .vector_store import VectorIndexMissingError, VectorSearchError, VectorSearchTimeoutError
 
 VIETNAMESE_STOPWORDS = {
     "và", "hoặc", "là", "của", "cho", "với", "một", "những", "các", "theo",
@@ -27,6 +30,11 @@ class QAService:
         self.retriever = retriever or Retriever()
         self.generator = generator or GeneratorService()
         self.reranker = reranker or RerankerService()  # 👈 Khởi tạo Reranker
+        self.enable_query_rewrite = os.getenv("ENABLE_QUERY_REWRITE", "0").lower() in (
+            "1", "true", "yes", "y"
+        )
+        self.llm_timeout_seconds = float(os.getenv("LLM_TIMEOUT_SECONDS", "45"))
+        self.retrieval_timeout_seconds = float(os.getenv("RETRIEVAL_TIMEOUT_SECONDS", "15"))
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", (text or "").strip())
@@ -88,8 +96,18 @@ class QAService:
             return default
 
         try:
-            result = generate_fn(prompt)
-            result = await self._maybe_await(result)
+            if inspect.iscoroutinefunction(generate_fn):
+                result = await asyncio.wait_for(
+                    generate_fn(prompt), timeout=self.llm_timeout_seconds
+                )
+            else:
+                # google-genai is synchronous in this project. Run it outside
+                # Chainlit's event loop and bound the user's waiting time.
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(generate_fn, prompt),
+                    timeout=self.llm_timeout_seconds,
+                )
+                result = await self._maybe_await(result)
             text = self._normalize_text(str(result))
             return text or default
         except Exception:
@@ -146,8 +164,11 @@ class QAService:
 
                 result = await self._maybe_await(result)
                 normalized = self._normalize_retrieval(result, top_k)
-                if normalized["results"]:
-                    return normalized
+                # A successful empty response is final. Calling another alias
+                # on the same retriever would execute the same RDS query again.
+                return normalized
+            except VectorSearchError:
+                raise
             except Exception:
                 continue
 
@@ -196,46 +217,99 @@ class QAService:
         return " ".join(keywords[:12]) if keywords else q
 
     async def ask(self, question: str, top_k: Optional[int] = None) -> Dict[str, Any]:
+        started_at = time.perf_counter()
+        timings_ms: Dict[str, Any] = {}
         top_k = top_k or 5
         question = self._normalize_text(question)
 
         # 🌟 Lấy số lượng ứng viên rộng hơn (Top 15 - 20) để Reranker đánh giá
-        candidate_k = max(top_k * 3, 15)
-
-        variants = self._build_query_variants(question)
-        broadened = self._broaden_question(question)
-        if broadened and broadened not in variants:
-            variants.append(broadened)
-
-        # 🚀 Tối ưu hóa truy vấn bằng Gemini LLM
-        rewrite_prompt = (
-            f"Bạn là chuyên gia ngôn ngữ pháp luật. Hãy chuyển đổi câu hỏi dưới đây thành một câu khẳng định ngắn gọn, "
-            f"chứa các từ khóa học thuật chính xác theo văn phong văn bản luật Việt Nam để phục vụ tra cứu.\n"
-            f"Chỉ trả ra đúng câu văn sau khi chuyển đổi, không giải thích gì thêm.\n\n"
-            f"Câu hỏi người dùng: {question}\n"
-            f"Câu tra cứu chuẩn hóa:"
+        candidate_k = (
+            max(top_k * 3, 15) if getattr(self.reranker, "enabled", False) else top_k
         )
-        optimized_query = await self._safe_generate(rewrite_prompt, default="")
-        if optimized_query and optimized_query not in variants:
-            variants.append(optimized_query)
+
+        # Keep the default path deliberately small. Query expansion can improve
+        # recall, but must be opt-in because each variant is another embedding
+        # and database round trip.
+        variants = [question]
+        broadened = self._broaden_question(question)
+
+        optimized_query = ""
+        if self.enable_query_rewrite:
+            rewrite_prompt = (
+                "Bạn là chuyên gia ngôn ngữ pháp luật. Hãy chuyển câu hỏi dưới đây "
+                "thành một câu tra cứu ngắn, giữ nguyên ý nghĩa pháp lý. Chỉ trả về "
+                "câu tra cứu, không giải thích.\n\n"
+                f"Câu hỏi: {question}\nCâu tra cứu:"
+            )
+            optimized_query = await self._safe_generate(rewrite_prompt, default="")
+            if optimized_query and optimized_query not in variants:
+                variants.append(optimized_query)
 
         retrievals: List[Dict[str, Any]] = []
+        retrieval_started_at = time.perf_counter()
         for variant in variants:
-            retrieval = await self._retrieve(variant, top_k=candidate_k)
+            try:
+                retrieval = await asyncio.wait_for(
+                    self._retrieve(variant, top_k=candidate_k),
+                    timeout=self.retrieval_timeout_seconds,
+                )
+            except VectorIndexMissingError:
+                return self._retrieval_error_response(
+                    question,
+                    top_k,
+                    variants,
+                    optimized_query or broadened,
+                    "VECTOR_INDEX_MISSING",
+                    "Cơ sở dữ liệu chưa có vector index hợp lệ và exact search đang bị tắt.",
+                    started_at,
+                    timings_ms,
+                )
+            except VectorSearchTimeoutError:
+                return self._retrieval_error_response(
+                    question,
+                    top_k,
+                    variants,
+                    optimized_query or broadened,
+                    "VECTOR_SEARCH_TIMEOUT",
+                    "Truy vấn cơ sở dữ liệu đã quá thời gian cho phép. Vui lòng thử lại sau.",
+                    started_at,
+                    timings_ms,
+                )
+            except asyncio.TimeoutError:
+                retrieval = {"results": [], "context": "", "top_k": candidate_k}
             if retrieval.get("results"):
                 retrievals.append(retrieval)
+        timings_ms["retrieval_ms"] = round((time.perf_counter() - retrieval_started_at) * 1000, 2)
+        vector_timings = getattr(getattr(self.retriever, "vector_store", None), "last_search_timings_ms", {})
+        if isinstance(vector_timings, dict) and vector_timings:
+            timings_ms.update(vector_timings)
 
         merged_results = self._merge_results(retrievals)
 
         # Fallback search nếu chưa ra kết quả
         if not merged_results and broadened:
-            fallback = await self._retrieve(broadened, top_k=candidate_k * 2)
+            fallback_started_at = time.perf_counter()
+            try:
+                fallback = await asyncio.wait_for(
+                    self._retrieve(broadened, top_k=candidate_k * 2),
+                    timeout=self.retrieval_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                fallback = {"results": [], "context": "", "top_k": candidate_k * 2}
             if fallback.get("results"):
                 merged_results = fallback.get("results", [])
+            timings_ms["fallback_retrieval_ms"] = round(
+                (time.perf_counter() - fallback_started_at) * 1000,
+                2,
+            )
+            vector_timings = getattr(getattr(self.retriever, "vector_store", None), "last_search_timings_ms", {})
+            if isinstance(vector_timings, dict) and vector_timings:
+                timings_ms.update(vector_timings)
 
         # 🎯 CHUẨN HÓA CÂU TRẢ LỜI KHI KHÔNG TÌM THẤY THÔNG TIN
         if not merged_results:
             fallback_answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
+            timings_ms["total_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
             return {
                 "question": question,
                 "answer": fallback_answer,
@@ -245,23 +319,30 @@ class QAService:
                 "prompt": "",
                 "query_variants": variants,
                 "optimized_query": optimized_query or broadened,
+                "latency_ms": timings_ms["total_ms"],
+                "timings_ms": timings_ms,
             }
 
         # 🌟 ĐIỂM NÂNG CẤP MỚI: Tiến hành Re-rank danh sách ứng viên thu được
+        rerank_started_at = time.perf_counter()
         final_results = await asyncio.to_thread(
             self.reranker.rerank,
             query=question,
             documents=merged_results,
             top_k=top_k,
         )
+        timings_ms["rerank_ms"] = round((time.perf_counter() - rerank_started_at) * 1000, 2)
 
         prompt = build_prompt(question, final_results)
+        llm_started_at = time.perf_counter()
         answer = await self._safe_generate(prompt, default="")
+        timings_ms["llm_ms"] = round((time.perf_counter() - llm_started_at) * 1000, 2)
 
         if not self._normalize_text(answer):
             answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
 
-        return {
+        timings_ms["total_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
+        response = {
             "question": question,
             "answer": answer,
             "top_k": top_k,
@@ -270,4 +351,43 @@ class QAService:
             "prompt": prompt,
             "query_variants": variants,
             "optimized_query": optimized_query or broadened,
+            "latency_ms": timings_ms["total_ms"],
+            "timings_ms": timings_ms,
+        }
+        # ASCII log prefix also works on Windows consoles configured with cp1252.
+        print(
+            "[QA] "
+            f"total_ms={timings_ms.get('total_ms')} "
+            f"retrieval_ms={timings_ms.get('retrieval_ms')} "
+            f"embedding_ms={timings_ms.get('embedding_ms')} "
+            f"db_search_ms={timings_ms.get('db_search_ms')} "
+            f"llm_ms={timings_ms.get('llm_ms')}"
+        )
+        return response
+
+    @staticmethod
+    def _retrieval_error_response(
+        question: str,
+        top_k: int,
+        variants: List[str],
+        optimized_query: str,
+        error_code: str,
+        message: str,
+        started_at: float,
+        timings_ms: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        timings = dict(timings_ms or {})
+        timings["total_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
+        return {
+            "question": question,
+            "answer": message,
+            "top_k": top_k,
+            "results": [],
+            "context": "",
+            "prompt": "",
+            "query_variants": variants,
+            "optimized_query": optimized_query,
+            "error_code": error_code,
+            "latency_ms": timings["total_ms"],
+            "timings_ms": timings,
         }

@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from src.rag_core.pipeline import build_index_pipeline
+from src.rag_core.pipeline import build_index_pipeline  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

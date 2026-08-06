@@ -17,10 +17,14 @@ boto3
 pypdf
 pgvector
 psycopg[binary]
-chainlit
 google-genai
 streamlit>=1.32.0
-pandas>=2.0.0
 plotly
 altair>=5.0.0
 bcrypt
+chainlit==2.11.1
+literalai==0.1.201
+cuid==0.4
+syncer==2.0.3
+PyJWT[crypto]
+

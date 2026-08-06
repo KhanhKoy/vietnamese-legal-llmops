@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 class RerankerService:
-    def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3") -> None:
+    def __init__(self, model_name: str = "AITeamVN/Vietnamese_Reranker") -> None:
         self.model_name = model_name
         self._model = None
-        # Kiểm tra xem có bật Reranker qua biến môi trường không (mặc định BẬT)
-        self.enabled = os.getenv("USE_RERANKER", "1").lower() in ("1", "true", "yes", "y")
+        # Keep it opt-in: first use may download a model and CPU inference can
+        # dominate latency on a small EC2 instance.
+        self.enabled = os.getenv("USE_RERANKER", "0").lower() in ("1", "true", "yes", "y")
 
     def _load_model(self) -> None:
         """Chỉ tải model vào RAM/GPU khi có truy vấn đầu tiên (Lazy Loading)."""

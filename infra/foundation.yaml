@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Foundation resources for Vietnamese Legal Chatbot (Cognito, DynamoDB, S3, SQS/DLQ)
+
+Parameters:
+  LegalDocumentsBucketName:
+    Type: String
+    Description: Globally unique lowercase S3 bucket name
+  ChatHistoryTableName:
+    Type: String
+    Default: LegalChatbotHistory
+
+Resources:
+  ChatHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref ChatHistoryTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+        - AttributeName: gsi2pk
+          AttributeType: S
+        - AttributeName: gsi2sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: gsi_user_updated
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: gsi_admin_date
+          KeySchema:
+            - AttributeName: gsi2pk
+              KeyType: HASH
+            - AttributeName: gsi2sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  IngestionDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  IngestionQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 900
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt IngestionDeadLetterQueue.Arn
+        maxReceiveCount: 4
+
+  IngestionQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref IngestionQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowS3Notifications
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt IngestionQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:s3:::${LegalDocumentsBucketName}
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  LegalDocumentsBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: IngestionQueuePolicy
+    Properties:
+      BucketName: !Ref LegalDocumentsBucketName
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt IngestionQueue.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: incoming/files/
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: legal-chatbot-users
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      MfaConfiguration: OPTIONAL
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: legal-chatbot-web
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+
+  UsersGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: users
+      UserPoolId: !Ref UserPool
+
+  EditorsGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: editors
+      UserPoolId: !Ref UserPool
+
+  AdminsGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admins
+      UserPoolId: !Ref UserPool
+
+Outputs:
+  ChatHistoryTableName:
+    Value: !Ref ChatHistoryTable
+  LegalDocumentsBucketName:
+    Value: !Ref LegalDocumentsBucket
+  IngestionQueueArn:
+    Value: !GetAtt IngestionQueue.Arn
+  IngestionDeadLetterQueueArn:
+    Value: !GetAtt IngestionDeadLetterQueue.Arn
+  CognitoUserPoolId:
+    Value: !Ref UserPool
+  CognitoAppClientId:
+    Value: !Ref UserPoolClient
