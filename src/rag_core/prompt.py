@@ -11,9 +11,11 @@ Quy tắc bắt buộc:
 3. Tuyệt đối KHÔNG tự bịa đặt thêm điều luật, số hiệu văn bản hoặc kiến thức bên ngoài Ngữ cảnh.
 4. Nếu trong Ngữ cảnh HOÀN TOÀN KHÔNG CHỨA THÔNG TIN để trả lời câu hỏi, bạn BẮT BUỘC phải trả lời chính xác câu sau:
    "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
-5. Nêu rõ ở cuối câu trả lời: "Lưu ý: Thông tin chỉ mang tính chất tham khảo, không phải là tư vấn pháp lý chính thức."
+5. Định dạng câu trả lời: mỗi ý tưởng trên một dòng mới, dùng dấu gạch đầu dòng (-) hoặc số thứ tự để liệt kê các ý, dễ đọc và rõ ràng.
+6. Nêu rõ ở cuối câu trả lời: "Lưu ý: Thông tin chỉ mang tính chất tham khảo, không phải là tư vấn pháp lý chính thức." 
 """
 
+MAX_CHARS_PER_CHUNK = 800
 
 def build_context_block(results: List[Dict[str, Any]]) -> str:
     if not results:
@@ -25,6 +27,9 @@ def build_context_block(results: List[Dict[str, Any]]) -> str:
         score = result.get("score", 0.0)
         doc_id = result.get("document_id", "N/A")
         text = str(result.get("text", "")).strip()
+        # Truncate text to keep prompt size manageable
+        if len(text) > MAX_CHARS_PER_CHUNK:
+            text = text[:MAX_CHARS_PER_CHUNK].rstrip() + "..."
         metadata = result.get("metadata", {})
 
         title = metadata.get("title", "Không rõ tiêu đề")

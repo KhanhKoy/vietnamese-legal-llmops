@@ -219,7 +219,8 @@ class QAService:
     async def ask(self, question: str, top_k: Optional[int] = None) -> Dict[str, Any]:
         started_at = time.perf_counter()
         timings_ms: Dict[str, Any] = {}
-        top_k = top_k or 5
+        if top_k is None:
+            top_k = int(os.getenv("TOP_K", "5"))
         question = self._normalize_text(question)
 
         # 🌟 Lấy số lượng ứng viên rộng hơn (Top 15 - 20) để Reranker đánh giá
@@ -339,7 +340,18 @@ class QAService:
         timings_ms["llm_ms"] = round((time.perf_counter() - llm_started_at) * 1000, 2)
 
         if not self._normalize_text(answer):
-            answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
+            # Fallback: synthesize answer from retrieved contexts
+            lines = []
+            for doc in final_results:
+                meta = doc.get("metadata", {})
+                title = meta.get("title", "N/A")
+                so_ky_hieu = meta.get("so_ky_hieu", "N/A")
+                # optionally include article/dieu if present in text? skip for brevity
+                lines.append(f"- {title} {so_ky_hieu}")
+            if lines:
+                answer = "Các quy định pháp lý liên quan:\n" + "\n".join(lines)
+            else:
+                answer = "Hiện không có thông tin về nội dung tìm kiếm trong cơ sở dữ liệu."
 
         timings_ms["total_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
         response = {
