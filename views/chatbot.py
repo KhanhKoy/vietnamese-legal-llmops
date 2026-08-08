@@ -75,9 +75,8 @@ def process_user_query(prompt: str, username: str, session_id: str) -> None:
         response = requests.post(API_URL, json=payload, timeout=60)
         if response.status_code == 200:
             data = response.json()
-            raw_answer = data.get("answer", "Không có câu trả lời.")
+            answer_content = data.get("answer", "Không có câu trả lời.")
             sources = data.get("sources", [])
-            answer_content = f"{raw_answer}\n\n---\n*✅ Phản hồi được trả về từ FastAPI Backend Core RAG*"
         else:
             answer_content = f"⚠️ Lỗi từ Backend API: HTTP {response.status_code} - {response.text}"
             sources = []
@@ -190,11 +189,16 @@ def show():
         avatar = "⚖️" if msg["role"] == "assistant" else "👤"
         with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
-            if msg["role"] == "assistant" and msg.get("sources"):
-                with st.expander("📚 Nguồn tham khảo văn bản pháp luật"):
-                    for src in msg["sources"]:
-                        st.markdown(f"- **{src['title']}** (Độ tương đồng: `{src['score']*100:.1f}%`)")
-                        st.caption(f"Trích dẫn: \"{src['snippet']}\"")
+            if msg["role"] == "assistant":
+                if msg.get("sources"):
+                    st.caption("✅ *Phản hồi được trả về từ FastAPI Backend Core RAG*")
+                    with st.expander("📚 Nguồn tham khảo văn bản pháp luật"):
+                        for src in msg["sources"]:
+                            title = src.get("title") or src.get("document_id") or "Văn bản"
+                            score = src.get("score", 0.0) * 100
+                            snippet = src.get("snippet") or src.get("text", "")
+                            st.markdown(f"• **{title}** *(Độ tương đồng: `{score:.1f}%`)*")
+                            st.caption(f"Trích dẫn: \"{snippet}\"")
             if msg["role"] == "assistant":
                 col_fb1, col_fb2, _ = st.columns([0.1, 0.1, 0.8])
                 current_fb = msg.get("feedback")

@@ -1,0 +1,19 @@
+cwd=G:\aws project\vietnamese-legal-llmops
+sys.path=['G:\\aws project\\vietnamese-legal-llmops\\src', 'G:\\aws project\\vietnamese-legal-llmops', 'G:\\aws project\\vietnamese-legal-llmops\\scripts', 'C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\\python311.zip', 'C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\\DLLs', 'C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\\Lib', 'C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0', 'C:\\Users\\Admin\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python311\\site-packages', 'C:\\Users\\Admin\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python311\\site-packages\\win32', 'C:\\Users\\Admin\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python311\\site-packages\\win32\\lib', 'C:\\Users\\Admin\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python311\\site-packages\\Pythonwin', 'C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\\Lib\\site-packages']
+
+--- IMPORTING build_index_pipeline ---
+Imported build_index_pipeline
+
+--- RUNNING build_index_pipeline(content_limit=5) ---
+
+--- EXCEPTION TRACEBACK ---
+Traceback (most recent call last):
+  File "G:\aws project\vietnamese-legal-llmops\scripts\debug_build_runner.py", line 27, in main
+    store = build_index_pipeline(content_limit=5)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\aws project\vietnamese-legal-llmops\src\rag_core\pipeline.py", line 36, in build_index_pipeline
+    store = VectorStore(embedder=embedder)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "G:\aws project\vietnamese-legal-llmops\src\rag_core\vector_store.py", line 46, in __init__
+    import psycopg
+ModuleNotFoundError: No module named 'psycopg'

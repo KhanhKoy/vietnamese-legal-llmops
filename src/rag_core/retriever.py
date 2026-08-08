@@ -146,7 +146,9 @@ class Retriever:
                 return self._normalize_results(result)
             except VectorSearchError:
                 raise
-            except Exception:
+            except Exception as e:
+                # 👈 Bổ sung print lỗi để không bị ẩn exception
+                print(f"❌ [Retriever Error] Lỗi khi gọi {method_name}: {e}")
                 return []
 
         return []
@@ -210,7 +212,11 @@ class Retriever:
         # overlapping methods for multiple query variants and also triggered
         # LOWER(text) LIKE '%...%' full-table scans.
         if getattr(self.vector_store, "use_pgvector", False):
-            return await self._call_store_method("search", question, k)
+            try:
+                return self.vector_store.search(query=question, top_k=k)
+            except Exception as e:
+                print(f"❌ [Retriever PGVector Error]: {e}")
+                return []
 
         query_variants = self._build_query_variants(question)
         keyword_query = self._keyword_query(question)

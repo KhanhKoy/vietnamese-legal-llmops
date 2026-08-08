@@ -496,3 +496,25 @@ section[data-testid="stSidebar"] div[data-testid="stCaptionContainer"] {
     font-weight: 500 !important;
 }
 
+/* Sửa lỗi tràn / đè chữ khung Chat & Expander */
+div[data-testid="stChatMessage"] {
+    max-height: none !important;
+    overflow: visible !important;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] p {
+    line-height: 1.75 !important;
+    margin-bottom: 0.8rem !important;
+}
+
+/* Căn chỉnh không cho tiêu đề Expander đè chữ */
+div[data-testid="stExpander"] details summary {
+    padding: 10px 14px !important;
+    font-size: 1.05rem !important;
+    line-height: 1.5 !important;
+}
+
+div[data-testid="stExpander"] details summary p {
+    font-weight: 600 !important;
+}
+
