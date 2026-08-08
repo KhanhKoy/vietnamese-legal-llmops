@@ -28,12 +28,6 @@ def show():
         st.markdown(f"### {current_admin}")
         st.caption("Bảng Quản Trị Hệ Thống")
         st.write("---")
-
-        if st.button("💬 Mở Giao diện Chatbot", use_container_width=True):
-            st.session_state.role = "user"
-            st.rerun()
-
-        st.markdown("---")
         if st.button("Đăng xuất", use_container_width=True, key="btn_logout"):
             st.session_state.logged_in = False
             st.session_state.user = None

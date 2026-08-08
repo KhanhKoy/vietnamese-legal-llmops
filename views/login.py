@@ -43,5 +43,4 @@ def show():
             st.session_state.page = "register"
             st.rerun()
 
-        st.write("")
-        st.info("💡 **Tài khoản dùng thử mẫu:**\n- User: `user1` / `password123`\n- Admin: `admin` / `admin123`", icon="ℹ️")
+        
