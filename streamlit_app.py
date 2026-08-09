@@ -2,7 +2,7 @@ import os
 
 import streamlit as st
 
-from src.storage import initialize_database, list_users
+from src.storage import get_app_db_backend, initialize_database, list_users
 
 
 def load_css(file_path: str) -> None:
@@ -14,6 +14,7 @@ def load_css(file_path: str) -> None:
 st.set_page_config(page_title="Trợ lý Pháp luật Việt Nam", page_icon="⚖️", layout="wide", initial_sidebar_state="expanded")
 load_css("assets/style.css")
 
+print(f"[streamlit] APP_DB_BACKEND={get_app_db_backend()}")
 initialize_database()
 
 if "users" not in st.session_state:

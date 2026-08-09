@@ -1,82 +1,74 @@
-# # Environment variables
+# Environment / secrets
 .env
 .env.local
 .env.*.local
+!.env.sample
+!.env.example
+secrets/
+credentials/
+*.pem
+*.key
+*.pfx
+*.ppk
+*.pkcs12
+
+# Local app / SQLite databases (use RDS in deploy)
+legal_chat.db
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.pyo
-*.pyd
-*.pyc
-*.pyo
-*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.cache/
 
-# # Distribution / packaging
-# .Python
-# build/
-# develop-eggs/
-# dist/
-# downloads/
-# eggs/
-# .eggs/
-# lib/
-# lib64/
-# parts/
-# sdist/
-# var/
-# wheels/
-# share/python-wheels/
-# *.egg-info/
-# .installed.cfg
-# *.egg
-
-# Virtual environment
+# Virtual environments
+.venv/
 venv/
 ENV/
 env/
-.venv
-.venv/
-pip-log.txt
-pip-delete-this-directory.txt
 
-# # IDE / Editor
-# .vscode/
-# .idea/
-# *.sublime-project
-# *.sublime-workspace
-
-# # Logs
-# *.log
-
-# Generated vector store artefacts
+# Generated vector store / model artefacts
 models/vector_store/
+models/**/*.bin
+models/**/*.pt
+models/**/*.onnx
+*.faiss
+*.index
 
-# # SQLite database files (if stored locally)
-# *.sqlite3
-# *.db
+# IDE / editor
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
 
-# # OS generated files
-# .DS_Store
-# Thumbs.db
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
 
-# # Temporary files
-# *.tmp
-# *.temp
+# Logs / temp
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
 
-# # Secrets / certificates
-# *.key
-# *.pem
-# *.pfx
-# *.ppk
-# *.pkcs12
-# *.gpg
-# *.asc
-# *.sig
-
-# # Sensitive folders
-# secrets/
-# credentials/
-# */secrets/*
-# */credentials/*
+# Docker / local overrides
+docker-compose.override.yml
