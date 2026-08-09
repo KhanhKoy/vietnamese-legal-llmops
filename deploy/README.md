@@ -15,7 +15,7 @@ EC2 only needs Docker. Do not mount SQLite into the container.
    - Inbound EC2: `8501` (UI), optionally `8000` (API) from your IP / ALB
    - RDS inbound `5432` from the EC2 security group
 3. IAM instance role preferred for Bedrock (and S3 if used). Avoid long-lived access keys when possible.
-4. Size: embedding on CPU is heavy — prefer **≥8 GB RAM** (e.g. `t3.large` / `t3.xlarge`).
+4. Size: embedding on CPU is heavy — prefer **≥8 GB RAM** and **≥20 GB disk** (e.g. `t3.large`). Default `torch` CUDA wheels will fill a small root volume; the Dockerfile installs **CPU-only torch**.
 
 ## Deploy steps
 
