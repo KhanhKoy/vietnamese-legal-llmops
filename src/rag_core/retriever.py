@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from .config import get_settings
+from .config_manager import get_config
 from .embeddings import EmbeddingService
 from .vector_store import VectorSearchError, VectorStore
 
@@ -205,7 +206,7 @@ class Retriever:
 
     async def retrieve(self, question: str, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
         self._ensure_loaded()
-        k = top_k or self.settings.top_k
+        k = top_k or get_config()["top_k"]
 
         # Production/RDS fast path: one question -> one embedding -> one indexed
         # nearest-neighbour query.  The former generic fallback loop called five

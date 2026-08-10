@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from .config_manager import DEFAULT_CONFIG, get_config
 
 load_dotenv()
 
@@ -31,11 +33,11 @@ class Settings:
     )
     embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
 
-    # LLM Generator (Gemini)
-    gemini_model_name: str = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
-    
-    # Retrieval
-    top_k: int = int(os.getenv("TOP_K", "5"))
+    # LLM Generator + RAG configuration
+    gemini_model_name: str = field(default_factory=lambda: get_config().get("model_name", DEFAULT_CONFIG["model_name"]))
+    top_k: int = field(default_factory=lambda: get_config().get("top_k", DEFAULT_CONFIG["top_k"]))
+    temperature: float = field(default_factory=lambda: get_config().get("temperature", DEFAULT_CONFIG["temperature"]))
+    max_tokens: int = field(default_factory=lambda: get_config().get("max_tokens", DEFAULT_CONFIG["max_tokens"]))
 
     # Storage
     vector_store_dir: Path = Path(os.getenv("VECTOR_STORE_DIR", str(VECTOR_STORE_DIR)))

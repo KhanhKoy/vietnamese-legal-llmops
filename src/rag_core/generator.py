@@ -4,6 +4,7 @@ import os
 from typing import Any, Optional
 
 from .config import get_settings
+from .config_manager import get_config
 
 
 class GeneratorService:
@@ -17,9 +18,18 @@ class GeneratorService:
     ) -> None:
         self.settings = get_settings()
         self.provider = os.getenv("LLM_PROVIDER", "gemini").lower()
-        # Read from environment with fallbacks
-        self.max_new_tokens = int(max_new_tokens if max_new_tokens is not None else os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "1024"))
-        self.temperature = float(temperature if temperature is not None else os.getenv("GEMINI_TEMPERATURE", "0.0"))
+
+        config = get_config()
+        self.max_new_tokens = int(
+            max_new_tokens
+            if max_new_tokens is not None
+            else config.get("max_tokens", self.settings.max_tokens)
+        )
+        self.temperature = float(
+            temperature
+            if temperature is not None
+            else config.get("temperature", self.settings.temperature)
+        )
 
         if self.provider == "bedrock":
             import boto3
@@ -45,7 +55,11 @@ class GeneratorService:
         from google import genai
         from google.genai import types
 
-        self.model_name = model_name or os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+        self.model_name = (
+            model_name
+            or config.get("model_name")
+            or os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+        )
         api_key = os.getenv("GEMINI_API_KEY", "")
         if not api_key:
             raise ValueError("❌ Không tìm thấy GEMINI_API_KEY trong file .env.")

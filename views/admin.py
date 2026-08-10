@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from src.rag_core.config_manager import get_config, update_config
 from src.storage import create_user, get_admin_stats, get_recent_activity, list_users, update_user_status
 
 
@@ -128,9 +129,13 @@ def show():
                     elif not validate_password(new_p):
                         st.error("Mật khẩu phải từ 6 ký tự trở lên, chứa ít nhất 1 chữ hoa và 1 số!")
                     else:
-                        create_user(u_clean, e_clean, new_p, role="user")
-                        st.toast(f"🎉 Đã thêm người dùng mới {u_clean} thành công!", icon="👤")
-                        st.rerun()
+                        try:
+                            create_user(u_clean, e_clean, new_p, role="user")
+                            st.toast("👤 Đã thêm người dùng mới thành công!", icon="👤")
+                            st.session_state.users = {user["username"]: user for user in list_users()}
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Không thể thêm người dùng: {e}")
 
         users_list = []
         for data in users:
@@ -176,7 +181,7 @@ def show():
                         else:
                             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             update_user_status(target_usr, "Inactive", True, now_str)
-                            st.toast("Đã vô hiệu hóa người dùng thành công!", icon="🔴")
+                            st.toast("🔴 Đã vô hiệu hóa người dùng thành công!", icon="🔴")
                             st.rerun()
             else:
                 if st.button("🟢 Khôi phục tài khoản", type="primary"):
@@ -210,7 +215,7 @@ def show():
     with tab_settings:
         st.subheader("⚙️ Cấu Hình Cài Đặt RAG Pipeline & LLM Model")
 
-        cfg = st.session_state.settings
+        cfg = get_config()
 
         col_cfg1, col_cfg2 = st.columns(2)
         with col_cfg1:
@@ -220,20 +225,32 @@ def show():
             max_tok_val = st.number_input("Max Tokens trả về (100..4096)", min_value=100, max_value=4096, value=int(cfg["max_tokens"]))
 
             model_options = [
-                "gemini-2.5-flash (Nhanh & Tối ưu chi phí)",
-                "gemini-2.5-pro (Tư duy pháp lý chuyên sâu)",
-                "gpt-4o-mini",
+                ("gemini-2.5-flash", "gemini-2.5-flash (Nhanh & Tối ưu chi phí)"),
+                ("gemini-2.5-pro", "gemini-2.5-pro (Tư duy pháp lý chuyên sâu)"),
+                ("gpt-4o-mini", "gpt-4o-mini"),
             ]
-            current_model = cfg.get("model", model_options[0])
-            model_index = model_options.index(current_model) if current_model in model_options else 0
-            model_val = st.selectbox("LLM Model Engine", model_options, index=model_index)
+            model_values = [label for _, label in model_options]
+            current_model_name = cfg.get("model_name", "gemini-2.5-flash")
+            model_index = next((idx for idx, (value, _) in enumerate(model_options) if value == current_model_name), 0)
+            model_val = st.selectbox("LLM Model Engine", model_values, index=model_index)
+            selected_model_name = model_options[model_index][0]
 
             if st.button("💾 Lưu Cài Đặt Hệ Thống", type="primary"):
-                st.session_state.settings["top_k"] = min(max(1, top_k_val), 20)
-                st.session_state.settings["temperature"] = min(max(0.0, temp_val), 1.0)
-                st.session_state.settings["max_tokens"] = min(max(100, max_tok_val), 4096)
-                st.session_state.settings["model"] = model_val
-                st.toast("💾 Cấu hình cài đặt hệ thống đã được lưu thành công!", icon="✅")
+                new_values = {
+                    "top_k": min(max(1, top_k_val), 20),
+                    "temperature": min(max(0.0, temp_val), 1.0),
+                    "max_tokens": min(max(100, max_tok_val), 4096),
+                    "model_name": selected_model_name,
+                }
+                try:
+                    success = update_config(new_values)
+                    if success:
+                        st.toast("✅ Đã lưu cấu hình thành công!", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error("Không thể cập nhật cấu hình hệ thống. Vui lòng thử lại.")
+                except Exception as e:
+                    st.error(f"Lỗi khi lưu cấu hình: {e}")
 
         with col_cfg2:
             st.markdown("##### 📂 Trạng Thái Vector Database")

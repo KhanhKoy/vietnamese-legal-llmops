@@ -69,7 +69,9 @@ def process_user_query(prompt: str, username: str, session_id: str) -> None:
 
     append_message(session_id, "user", prompt, [])
 
-    top_k = st.session_state.get("settings", {}).get("top_k", 5)
+    from src.rag_core.config_manager import get_config
+
+    top_k = get_config()["top_k"]
     try:
         payload = {"question": prompt, "top_k": top_k}
         response = requests.post(API_URL, json=payload, timeout=60)
@@ -155,17 +157,24 @@ def show():
                 with st.popover("🗑️", help="Xóa phiên này", use_container_width=True):
                     st.write("Xóa phiên này?")
                     if st.button("Xóa", key=f"del_{sess['id']}", type="primary", use_container_width=True):
-                        delete_chat_session(sess["id"])
-                        st.session_state.active_session_id = None
-                        st.toast("Đã xóa phiên làm việc!", icon="🗑️")
-                        st.rerun()
+                        try:
+                            delete_chat_session(sess["id"])
+                            st.session_state.active_session_id = None
+                            st.toast("🗑️ Đã xóa session thành công!", icon="🗑️")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Không thể xóa session: {e}")
 
         st.markdown("---")
 
         if st.button("🗑️ Xóa toàn bộ lịch sử trò chuyện", use_container_width=True, key="btn_clear_all"):
-            for sess in user_sessions:
-                delete_chat_session(sess["id"])
-            st.session_state.active_session_id = None
+            try:
+                for sess in user_sessions:
+                    delete_chat_session(sess["id"])
+                st.session_state.active_session_id = None
+                st.toast("🗑️ Đã xóa session thành công!", icon="🗑️")
+            except Exception as e:
+                st.error(f"Không thể xóa toàn bộ lịch sử: {e}")
             new_session = create_chat_session(user_record["id"], "Cuộc trò chuyện mới")
             append_message(new_session["id"], "assistant", f"Xin chào **{current_user}**! Tôi là **Trợ lý Pháp luật Việt Nam**. Bạn muốn tra cứu hay tư vấn vấn đề pháp lý nào?", [], None)
             st.toast("Đã xóa toàn bộ lịch sử!", icon="🗑️")

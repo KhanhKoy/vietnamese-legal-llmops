@@ -3,6 +3,7 @@ import os
 import streamlit as st
 
 from src.storage import initialize_database, list_users
+from src.rag_core.config_manager import initialize_config
 
 
 def load_css(file_path: str) -> None:
@@ -15,6 +16,7 @@ st.set_page_config(page_title="Trợ lý Pháp luật Việt Nam", page_icon="�
 load_css("assets/style.css")
 
 initialize_database()
+initialize_config()
 
 if "users" not in st.session_state:
     st.session_state.users = {user["username"]: user for user in list_users()}
@@ -34,13 +36,6 @@ if "active_session_id" not in st.session_state:
 if "suggestion_index" not in st.session_state:
     st.session_state.suggestion_index = 0
 
-if "settings" not in st.session_state:
-    st.session_state.settings = {
-        "top_k": 5,
-        "temperature": 0.2,
-        "max_tokens": 1024,
-        "model": "gemini-2.5-flash (Nhanh & Tối ưu chi phí)",
-    }
 
 
 def main() -> None:

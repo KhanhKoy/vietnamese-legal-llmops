@@ -220,7 +220,7 @@ class QAService:
         started_at = time.perf_counter()
         timings_ms: Dict[str, Any] = {}
         if top_k is None:
-            top_k = int(os.getenv("TOP_K", "5"))
+            top_k = get_config()["top_k"]
         question = self._normalize_text(question)
 
         # 🌟 Lấy số lượng ứng viên rộng hơn (Top 15 - 20) để Reranker đánh giá

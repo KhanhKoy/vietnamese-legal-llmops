@@ -7,7 +7,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-import bcrypt
+# bcrypt is optional for local dev; fall back to hashlib when missing
+try:
+    import bcrypt  # type: ignore
+except Exception:
+    bcrypt = None
+    import hashlib
+    import os as _os
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "legal_chat.db")
 
@@ -65,7 +71,8 @@ def initialize_database() -> None:
                 feedback TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id),
-                FOREIGN KEY (session_id) REFERENCES chat_sessions(id)
+                FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE
             );
             """
         )
@@ -82,11 +89,26 @@ def initialize_database() -> None:
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    if bcrypt:
+        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    # fallback: use sha256 with salt (development only)
+    salt = _os.urandom(8).hex()
+    dp = hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+    return f"sha256${salt}${dp}"
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    if bcrypt:
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    try:
+        algo, salt, dp = password_hash.split("$", 2)
+        if algo != "sha256":
+            return False
+        import hashlib as _hashlib
+
+        return _hashlib.sha256((salt + password).encode("utf-8")).hexdigest() == dp
+    except Exception:
+        return False
 
 
 def _now() -> str:
@@ -204,14 +226,20 @@ def seed_feedback(conn: sqlite3.Connection) -> None:
     count = conn.execute("SELECT COUNT(*) AS c FROM feedback_events").fetchone()["c"]
     if count > 0:
         return
-
     events = [
         ("fb-1", "user-1", "sess-2", "msg-2", "like", _now()),
     ]
-    conn.executemany(
-        "INSERT INTO feedback_events (id, user_id, session_id, message_id, feedback, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        events,
-    )
+    # Insert only if referenced user, session and message exist to avoid FK errors
+    for ev in events:
+        ev_id, ev_user, ev_session, ev_message, ev_fb, ev_created = ev
+        u = conn.execute("SELECT 1 FROM users WHERE id = ?", (ev_user,)).fetchone()
+        s = conn.execute("SELECT 1 FROM chat_sessions WHERE id = ?", (ev_session,)).fetchone()
+        m = conn.execute("SELECT 1 FROM chat_messages WHERE id = ?", (ev_message,)).fetchone()
+        if u and s and m:
+            conn.execute(
+                "INSERT INTO feedback_events (id, user_id, session_id, message_id, feedback, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (ev_id, ev_user, ev_session, ev_message, ev_fb, ev_created),
+            )
 
 
 def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
@@ -342,6 +370,9 @@ def get_chat_session(session_id: str) -> Dict[str, Any]:
 def delete_chat_session(session_id: str) -> None:
     conn = _connect()
     try:
+        # Delete dependent feedback events and messages first to avoid FK violations
+        conn.execute("DELETE FROM feedback_events WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
         conn.commit()
     finally:

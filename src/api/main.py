@@ -10,6 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from src.rag_core.config_manager import initialize_config
 from src.rag_core.qa_service import QAService
 
 # Singleton QAService instance
@@ -18,8 +19,9 @@ qa_service_instance = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global qa_service_instance
-    print("[API INIT] Khởi tạo QAService (Load FAISS & Embedding)...")
+    print("[API INIT] Khởi tạo system config và QAService (Load FAISS & Embedding)...")
     try:
+        initialize_config()
         qa_service_instance = QAService()
         print("[API INIT SUCCESS] ✅ Core RAG & Vector Store tải thành công!")
     except Exception as e:
