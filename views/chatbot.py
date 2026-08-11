@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Any, Dict, List
 
@@ -36,7 +37,9 @@ SUGGESTION_POOLS = [
     ],
 ]
 
-API_URL = "http://127.0.0.1:8000/ask"
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000/ask").rstrip("/")
+if not API_URL.endswith("/ask"):
+    API_URL = f"{API_URL}/ask"
 
 
 def load_user_sessions(username: str) -> List[Dict[str, Any]]:

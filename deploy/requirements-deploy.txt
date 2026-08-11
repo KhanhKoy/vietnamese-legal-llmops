@@ -1,0 +1,24 @@
+# Lean deps for EC2 Streamlit + FastAPI /ask (no Chainlit).
+datasets
+fsspec
+pyarrow
+numpy
+pandas
+python-dotenv
+sentence-transformers
+transformers
+faiss-cpu>=1.8.0
+fastapi
+uvicorn
+pydantic
+requests
+boto3
+pypdf
+pgvector
+psycopg[binary]
+google-genai
+streamlit>=1.32.0
+plotly
+altair>=5.0.0
+bcrypt
+PyJWT[crypto]

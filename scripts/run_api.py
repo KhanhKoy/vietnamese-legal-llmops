@@ -13,8 +13,9 @@ if str(SRC_ROOT) not in sys.path:
 
 
 if __name__ == "__main__":
+    # Prefer API_MODULE=api.main:app for Streamlit /ask; use api.app:app for Cognito /api.
     uvicorn.run(
-        "api.app:app",
+        os.getenv("API_MODULE", "api.main:app"),
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8000")),
         reload=os.getenv("RELOAD", "0").lower() in {"1", "true", "yes"},
