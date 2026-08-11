@@ -8,7 +8,32 @@ services:
         required: false
     environment:
       APP_MODE: api
+      PORT: "8000"
+      HOST: "0.0.0.0"
+      API_MODULE: api.main:app
+      USE_PGVECTOR: "true"
+      APP_DB_BACKEND: postgres
+      # Streamlit talks to this service over the compose network; keep /ask open.
       AUTH_DISABLED: "true"
-      ENABLE_API_DOCS: "true"
     ports:
       - "8000:8000"
+    restart: unless-stopped
+
+  streamlit:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      APP_MODE: streamlit
+      PORT: "8501"
+      API_URL: http://api:8000/ask
+      USE_PGVECTOR: "true"
+      APP_DB_BACKEND: postgres
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    restart: unless-stopped

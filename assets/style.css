@@ -1,0 +1,520 @@
+/* =========================================================
+   STREAMLIT LEGAL AI CHATBOT - MODERN DESIGN SYSTEM
+   ========================================================= */
+
+:root {
+    --primary-color: #1E88E5;
+    --primary-hover: #1565C0;
+    --bg-canvas: #F8FAFC;
+    --surface-white: #FFFFFF;
+    --text-dark: #0F172A;
+    --text-muted: #475569;
+    --border-color: #E2E8F0;
+}
+
+/* --- 1. GLOBAL LAYOUT & TYPOGRAPHY --- */
+html, body, div[data-testid="stAppViewContainer"] {
+    background-color: var(--bg-canvas);
+    color: var(--text-dark);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Tăng cỡ chữ & dòng cho nội dung văn bản */
+div[data-testid="stMarkdownContainer"] p, 
+div[data-testid="stAlert"] p,
+div[data-testid="stAlert"] li {
+    font-size: 1.15rem;
+    line-height: 1.6;
+}
+
+/* --- 2. FORM & INPUT CONTROLS (Nổi bật & Sắc nét) --- */
+
+/* Đưa Form Login thành một Card trắng nổi bật */
+form[data-testid="stForm"] {
+    background-color: var(--surface-white);
+    border-radius: 20px;
+    padding: 2.2rem 2rem;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.02);
+}
+
+/* Nhãn tiêu đề Tên đăng nhập / Mật khẩu */
+div.stTextInput label {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    margin-bottom: 8px;
+}
+
+/* 1. Khung chứa ngoài cùng của ô Input (BaseWeb Container) */
+div.stTextInput div[data-baseweb="input"] {
+    background-color: #FFFFFF;             /* Nền trắng sáng nổi bật */
+    border: 1.5px solid #CBD5E1;           /* Viền xám đậm rõ ràng */
+    border-radius: 12px;
+    padding: 2px 6px;
+    transition: all 0.2s ease-in-out;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04); /* Đổ bóng nhẹ */
+}
+
+/* Hiệu ứng khi di chuột vào (Hover) */
+div.stTextInput div[data-baseweb="input"]:hover {
+    border-color: #94A3B8;
+}
+
+/* Hiệu ứng khi nhấp chuột vào nhập (Focus) */
+div.stTextInput div[data-baseweb="input"]:focus-within {
+    border-color: var(--primary-color);
+    background-color: #FFFFFF;
+    box-shadow: 0 0 0 4px rgba(30, 136, 229, 0.18); /* Halo xanh tỏa ra nhẹ */
+}
+
+/*Thẻ input nhập văn bản thực tế bên trong */
+div.stTextInput input {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--text-dark);
+    padding: 10px 8px;
+    border: none;                          /* Bỏ border mặc định để ăn theo khung container */
+    background-color: transparent;         /* Nền trong suốt */
+}
+
+/*Chữ gợi ý mờ (Placeholder) nét & rõ hơn */
+div.stTextInput input::placeholder {
+    color: #64748B;                        /* Màu xám vừa tầm, không bị mờ nhạt */
+    opacity: 1;
+}
+
+/*Icon con mắt ẩn/hiện mật khẩu */
+div.stTextInput button[aria-label="Show password"],
+div.stTextInput button[aria-label="Hide password"] {
+    color: #64748B;
+    background: transparent;
+    border: none;
+}
+
+
+/* --- 3. BUTTONS (Dày dặn & To rõ) --- */
+div.stButton > button, 
+div[data-testid="stFormSubmitButton"] > button {
+    font-size: 1.15rem;
+    font-weight: 700;
+    min-height: 52px;
+    padding: 10px 20px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    transition: all 0.2s ease-in-out;
+}
+
+/* Nút Submit Primary */
+div[data-testid="stFormSubmitButton"] > button[kind="primary"] {
+    background-color: var(--primary-color);
+    color: #FFFFFF;
+    border: none;
+}
+
+div[data-testid="stFormSubmitButton"] > button[kind="primary"]:hover {
+    background-color: var(--primary-hover);
+    box-shadow: 0 4px 12px rgba(30, 136, 229, 0.25);
+    transform: translateY(-1px);
+}
+
+
+/* =========================================================
+   4. SIDEBAR REFINEMENT (Hình 1 & Hình 2)
+   ========================================================= */
+section[data-testid="stSidebar"] {
+    background-color: var(--surface-white);
+    border-right: 1px solid var(--border-color);
+}
+
+/* HÌNH 1: PHÓNG TO THÔNG TIN USER NỔI BẬT */
+div[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text-dark);
+}
+
+div[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] span,
+div[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] small {
+    font-size: 0.95rem;
+    color: var(--text-muted);
+}
+
+/* =========================================================
+   QUẢN LÝ PHIÊN LÀM VIỆC & SIDEBAR
+   ========================================================= */
+
+/* 1. NÚT ACTION CHUNG (Cuộc trò chuyện mới / Xóa toàn bộ) */
+section[data-testid="stSidebar"] div.stButton > button {
+    border-radius: 12px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    min-height: 46px;
+    padding: 8px 16px;
+    transition: all 0.2s ease;
+}
+
+/* 2. NÚT ĐĂNG XUẤT MÀU ĐỎ NỔI BẬT */
+section[data-testid="stSidebar"] .st-key-btn_logout button,
+section[data-testid="stSidebar"] .st-key-btn_logout > button {
+    background-color: #FEF2F2 !important;
+    color: #DC2626 !important;
+    border: 1px solid #FECACA !important;
+    font-weight: 700 !important;
+}
+
+section[data-testid="stSidebar"] .st-key-btn_logout button:hover,
+section[data-testid="stSidebar"] .st-key-btn_logout > button:hover {
+    background-color: #DC2626 !important;
+    color: #FFFFFF !important;
+    border-color: #DC2626 !important;
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25) !important;
+}
+
+/* 3. CĂN CHỈNH HÀNG CHỨA PHIÊN CHAT + NÚT THÙNG RÁC */
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+/* 4. NÚT CHỌN PHIÊN CHAT (Cột trái) */
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] div[data-testid="stColumn"]:first-child div.stButton > button {
+    font-size: 0.92rem;
+    font-weight: 500;
+    padding: 8px 12px;
+    border-radius: 10px;
+    min-height: 42px;
+    width: 100%;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 5. NÚT THÙNG RÁC POPOVER (Cột phải - Target trực tiếp button trong stPopover) */
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] div[data-testid="stColumn"]:last-child div[data-testid="stPopover"] > button {
+    min-height: 42px;
+    height: 42px;
+    width: 100%;
+    padding: 0;
+    border-radius: 10px;
+    background-color: #F8FAFC;
+    border: 1px solid var(--border-color, #E2E8F0);
+    color: #64748B;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] div[data-testid="stColumn"]:last-child div[data-testid="stPopover"] > button:hover {
+    background-color: #FEE2E2;
+    color: #DC2626;
+    border-color: #FCA5A5;
+}
+
+
+/* =========================================================
+   5. CHATBOT UI & BUBBLES MODERN (Hình 3 - Phần Chat To Rõ)
+   ========================================================= */
+   
+div[data-testid="stChatMessage"] {
+    padding: 1.35rem 1.75rem;
+    border-radius: 18px;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+    border: 1px solid var(--border-color);
+    font-size: 1.15rem; /* Cỡ chữ chat to rõ */
+    line-height: 1.7;
+}
+
+/* Assistant Bubble (Tin nhắn của Bot) */
+div[data-testid="stChatMessage"]:has(div[aria-label="Chat message avatar"]):nth-child(even) {
+    background-color: var(--surface-white);
+    border-color: #E2E8F0;
+}
+
+/* User Bubble (Tin nhắn của Người dùng) */
+div[data-testid="stChatMessage"]:has(div[aria-label="Chat message avatar"]):nth-child(odd) {
+    background-color: #F1F5F9;
+    border-color: #CBD5E1;
+}
+
+/* Avatar Bot & User */
+div[data-testid="stChatMessageAvatar"] {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+
+/* =========================================================
+   TĂNG CỠ CHỮ TIN NHẮN CHAT (USER & BOT)
+   ========================================================= */
+
+/* 1. Tăng cỡ chữ nội dung văn bản trong khung Chat */
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] p,
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] li {
+    font-size: 1.2rem;     /* Bạn có thể tăng lên 1.1rem hoặc 1.15rem tùy thích */
+    line-height: 1.6;        /* Tăng khoảng cách dòng giúp dễ đọc văn bản pháp luật */
+    color: #1E293B;
+}
+
+/* 2. Tăng cỡ chữ các tiêu đề danh sách, số thứ tự  */
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] ol,
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] ul {
+    font-size: 1.2rem;
+}
+
+/* 3. Tăng cỡ chữ trong khung Expander */
+div[data-testid="stChatMessage"] div[data-testid="stExpander"] p,
+div[data-testid="stChatMessage"] div[data-testid="stExpander"] span {
+    font-size: 1.2rem;
+}
+
+
+/* Các nút gợi ý dạng CHIP / BADGE nằm ngang */
+div[data-testid="stHorizontalBlock"] {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    gap: 10px;
+    scroll-behavior: smooth;
+}
+
+/* Đảm bảo cột bên trong co lại, không bị tràn */
+div[data-testid="stHorizontalBlock"] div[data-testid="stColumn"] {
+    flex: 0 0 auto;
+    min-width: 0;           /* Cho phép cột co lại */
+    overflow: hidden;        /* Ẩn phần thừa */
+    max-width: 100%;
+}
+
+div[data-testid="stHorizontalBlock"] div.stButton {
+    flex: 0 0 auto;
+    max-width: 100%;
+}
+
+div[data-testid="stHorizontalBlock"] div.stButton > button {
+    border-radius: 20px;
+    border: 1px solid var(--border-color);
+    background-color: var(--surface-white);
+    color: #334155;
+    font-size: 0.9rem;          /* Giảm nhẹ font để phù hợp */
+    font-weight: 500;
+    padding: 8px 12px;
+    min-height: 38px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+    width: 100%;                /* Chiếm toàn bộ cột */
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;    /* Hiển thị dấu ... khi quá dài */
+    display: inline-block;
+}
+
+div[data-testid="stHorizontalBlock"] div.stButton > button:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    background-color: #F0F9FF;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(30, 136, 229, 0.12);
+}
+
+
+/* Khung nhập tin nhắn Chat Input ở đáy màn hình */
+div[data-testid="stChatInput"] {
+    border-radius: 28px;
+    border: 2px solid #CBD5E1;
+    background-color: var(--surface-white);
+    padding: 6px 14px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.05);
+}
+
+div[data-testid="stChatInput"]:focus-within {
+    border-color: var(--primary-color);
+    box-shadow: 0 6px 24px rgba(30, 136, 229, 0.2);
+}
+
+div[data-testid="stChatInput"] textarea {
+    font-size: 1.15rem;
+    color: var(--text-dark);
+}
+
+
+/* =========================================================
+   6. GỢI Ý CÂU HỎI CUỘN NGANG & NÚT FEEDBACK (Hình 3)
+   ========================================================= */
+
+/* Biến Hàng Gợi Ý thành CONTAINER CUỘN NGANG (Scrollable Row) */
+div[data-testid="stHorizontalBlock"]:has(div.stButton) {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    gap: 10px;
+    scroll-behavior: smooth;
+}
+
+/* Thanh cuộn ngang mỏng & thẩm mỹ */
+div[data-testid="stHorizontalBlock"]:has(div.stButton)::-webkit-scrollbar {
+    height: 5px;
+}
+
+div[data-testid="stHorizontalBlock"]:has(div.stButton)::-webkit-scrollbar-thumb {
+    background: #CBD5E1;
+    border-radius: 10px;
+}
+
+/* Các nút gợi ý dạng CHIP / BADGE nằm ngang */
+div[data-testid="stHorizontalBlock"] div.stButton {
+    flex: 0 0 auto; /* Không cho co ép kích thước */
+}
+
+div[data-testid="stHorizontalBlock"] div.stButton > button {
+    border-radius: 20px; /* Bo tròn kiểu Chip */
+    border: 1px solid var(--border-color);
+    background-color: var(--surface-white);
+    color: #334155;
+    font-size: 0.95rem; /* Nhỏ gọn */
+    font-weight: 500;
+    padding: 8px 16px;
+    white-space: nowrap; /* Giữ chữ trên 1 dòng */
+    min-height: 38px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+}
+
+div[data-testid="stHorizontalBlock"] div.stButton > button:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    background-color: #F0F9FF;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(30, 136, 229, 0.12);
+}
+
+/* Nút Thích / Không thích bên trong tin nhắn */
+div[data-testid="stChatMessage"] div.stButton > button {
+    min-height: 34px;
+    padding: 4px 14px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border-radius: 16px;
+    background-color: #F8FAFC;
+    border: 1px solid var(--border-color);
+}
+
+div[data-testid="stChatMessage"] div.stButton > button:hover {
+    background-color: #F1F5F9;
+    border-color: #CBD5E1;
+    color: var(--text-dark);
+}
+
+
+/* --- 7. ADMIN METRIC CARDS --- */
+div[data-testid="stMetric"], 
+div.metric-card {
+    background-color: var(--surface-white);
+    border-radius: 16px;
+    padding: 20px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+div[data-testid="stMetric"]:hover, 
+div.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.06);
+}
+
+/* --- 8. ADMIN DASHBOARD TYPOGRAPHY SCALE --- */
+div[data-testid="stTabs"] button[role="tab"] {
+    font-size: 1.05rem !important;
+    font-weight: 600 !important;
+    padding: 0.6rem 0.95rem !important;
+}
+
+div[data-testid="stTab"] h1,
+div[data-testid="stTab"] h2,
+div[data-testid="stTab"] h3,
+div[data-testid="stTab"] h4,
+div[data-testid="stTab"] p,
+div[data-testid="stTab"] li,
+div[data-testid="stTab"] label,
+div[data-testid="stTab"] .stTextInput,
+div[data-testid="stTab"] .stSelectbox,
+div[data-testid="stTab"] .stNumberInput,
+div[data-testid="stTab"] .stDataFrame,
+div[data-testid="stTab"] .stCodeBlock {
+    font-size: 1.15rem !important;
+    line-height: 1.6 !important;
+}
+
+div[data-testid="stTab"] h1 {
+    font-size: 1.5rem !important;
+}
+
+div[data-testid="stTab"] h2 {
+    font-size: 1.35rem !important;
+}
+
+div[data-testid="stTab"] h3 {
+    font-size: 1.2rem !important;
+}
+
+div[data-testid="stTab"] h4 {
+    font-size: 1.1rem !important;
+}
+
+div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    font-size: 1.8rem !important;
+    line-height: 1.2 !important;
+}
+
+div[data-testid="stMetric"] [data-testid="stMetricLabel"] {
+    font-size: 1.05rem !important;
+}
+
+div[data-testid="stMetric"] {
+    padding: 18px !important;
+}
+
+/* Phóng to tiêu đề admin (###) trong Sidebar */
+section[data-testid="stSidebar"] h3 {
+    font-size: 2.0rem !important;
+    font-weight: 800 !important;
+    color: #0F172A !important;
+    margin-bottom: 4px !important;
+}
+
+/* Phóng to dòng caption trong Sidebar */
+section[data-testid="stSidebar"] div[data-testid="stCaptionContainer"] {
+    font-size: 1.6rem !important;
+    color: #0f172a !important;
+    font-weight: 500 !important;
+}
+
+/* Sửa lỗi tràn / đè chữ khung Chat & Expander */
+div[data-testid="stChatMessage"] {
+    max-height: none !important;
+    overflow: visible !important;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] p {
+    line-height: 1.75 !important;
+    margin-bottom: 0.8rem !important;
+}
+
+/* Căn chỉnh không cho tiêu đề Expander đè chữ */
+div[data-testid="stExpander"] details summary {
+    padding: 10px 14px !important;
+    font-size: 1.05rem !important;
+    line-height: 1.5 !important;
+}
+
+div[data-testid="stExpander"] details summary p {
+    font-weight: 600 !important;
+}
+

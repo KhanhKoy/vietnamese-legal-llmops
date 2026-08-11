@@ -4,6 +4,7 @@ import os
 from typing import Any, Sequence
 
 import numpy as np
+import torch
 
 from .config import get_settings
 
@@ -17,19 +18,16 @@ class EmbeddingService:
             in ("1", "true", "yes", "y")
         )
         if self.use_bedrock:
-            # Lazy import boto3 to avoid hard dependency when not used
             import boto3
             from botocore.config import Config
 
-            # Region can be overridden via env; otherwise default from settings or us-east-1
             self.region = os.getenv(
                 "AWS_DEFAULT_REGION",
                 getattr(self.settings, "aws_default_region", "us-east-1"),
             )
-            # Model ID can be overridden via env
             self.model_id = os.getenv(
                 "BEDROCK_EMBEDDING_MODEL",
-                "amazon.titan-embed-text-v1",  # default Titan Text Embedding v1
+                "amazon.titan-embed-text-v1",
             )
             boto_config = Config(
                 retries={"max_attempts": 5, "mode": "standard"},
@@ -41,37 +39,42 @@ class EmbeddingService:
                 region_name=self.region,
                 config=boto_config,
             )
-            self._dim: int | None = None  # will be determined on first embed
+            self._dim: int | None = None
         else:
-            # Local sentence‑transformers path
-            import torch  # noqa: F401
-
-            self.model_name = self.settings.embedding_model_name
+            self.model_name = self.settings.embedding_model_name or "AITeamVN/Vietnamese_Embedding"
             requested_device = os.getenv("DEVICE", "auto").lower()
-            device = (
+            self.device = (
                 requested_device
                 if requested_device in {"cpu", "cuda"}
                 else ("cuda" if torch.cuda.is_available() else "cpu")
             )
-            from sentence_transformers import SentenceTransformer
+            
+            # Chạy local bằng AutoModel & AutoTokenizer (dùng use_fast=False chống crash Windows)
+            from transformers import AutoModel, AutoTokenizer
 
-            self.model: Any = SentenceTransformer(self.model_name, device=device)
-            self._dim: int | None = None  # will be determined on first embed
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, use_fast=False)
+            self.model = AutoModel.from_pretrained(self.model_name)
+            self.model.to(self.device)
+            self.model.eval()
 
-    # -----------------------------------------------------------------
-    # Internal helpers
-    # -----------------------------------------------------------------
+            self._dim: int | None = getattr(self.model.config, "hidden_size", 768)
+
     def _ensure_dim(self, length: int) -> None:
         if self._dim is None:
             self._dim = length
 
+    def _mean_pooling(self, model_output: Any, attention_mask: torch.Tensor) -> torch.Tensor:
+        token_embeddings = model_output[0]
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+        sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+        return sum_embeddings / sum_mask
+
     def _embed_via_bedrock(self, texts: list[str]) -> list[list[float]]:
-        """Call Bedrock Titan Embedding for each text (serial)."""
         import json
 
         embeddings: list[list[float]] = []
         for txt in texts:
-            # Titan accepts up to ~8192 tokens; we truncate to be safe
             body = {"inputText": txt[:8000]}
             response = self._client.invoke_model(
                 body=json.dumps(body),
@@ -87,19 +90,32 @@ class EmbeddingService:
             embeddings.append(embedding)
         return embeddings
 
-    def _embed_via_st(self, texts: list[str]) -> np.ndarray:
-        embeddings = self.model.encode(
-            texts,
-            batch_size=self.batch_size,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
-        return np.asarray(embeddings, dtype=np.float32)
+    def _embed_via_transformers(self, texts: list[str]) -> np.ndarray:
+        if not texts:
+            return np.empty((0, self.dimension), dtype=np.float32)
 
-    # -----------------------------------------------------------------
-    # Public API
-    # -----------------------------------------------------------------
+        all_embeddings = []
+        batch_size = max(1, self.batch_size)
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i : i + batch_size]
+            encoded_input = self.tokenizer(
+                batch_texts,
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors="pt",
+            ).to(self.device)
+
+            with torch.no_grad():
+                model_output = self.model(**encoded_input)
+                sentence_embeddings = self._mean_pooling(model_output, encoded_input["attention_mask"])
+                sentence_embeddings = torch.nn.functional.normalize(sentence_embeddings, p=2, dim=1)
+                all_embeddings.append(sentence_embeddings.cpu().numpy())
+
+        res = np.vstack(all_embeddings).astype(np.float32)
+        self._ensure_dim(res.shape[1])
+        return res
+
     def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
         texts_list = [str(t).strip() for t in texts]
         if not texts_list:
@@ -109,13 +125,14 @@ class EmbeddingService:
             raw_embeds = self._embed_via_bedrock(list(texts_list))
             arr = np.asarray(raw_embeds, dtype=np.float32)
         else:
-            arr = self._embed_via_st(list(texts_list))
+            arr = self._embed_via_transformers(list(texts_list))
 
-        # Ensure dimension known
         if self._dim is None:
             self._dim = arr.shape[1]
-        # Convert to float32 to match original storage format
         return np.asarray(arr, dtype=np.float32)
+
+    def embed_documents(self, texts: Sequence[str]) -> np.ndarray:
+        return self.embed_texts(texts)
 
     def embed_query(self, query: str) -> np.ndarray:
         query = (query or "").strip()
@@ -126,13 +143,7 @@ class EmbeddingService:
             raw = self._embed_via_bedrock([query])[0]
             vec = np.asarray(raw, dtype=np.float32)
         else:
-            vec = self.model.encode(
-                [query],
-                batch_size=1,
-                convert_to_numpy=True,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            )[0]
+            vec = self._embed_via_transformers([query])[0]
 
         if self._dim is None:
             self._dim = len(vec)
@@ -141,7 +152,6 @@ class EmbeddingService:
     @property
     def dimension(self) -> int:
         if self._dim is None:
-            # Trigger a dummy embed to initialise dimension
             dummy_vec = self.embed_query("dummy")
             self._dim = len(dummy_vec)
         return int(self._dim)

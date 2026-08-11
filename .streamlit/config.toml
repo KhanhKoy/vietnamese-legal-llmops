@@ -1,0 +1,11 @@
+[theme]
+primaryColor = "#0F4C81"          # Xanh Navy cổ điển, uy nghiêm
+backgroundColor = "#F8FAFC"       # Trắng Slate dịu mắt
+secondaryBackgroundColor = "#FFFFFF" # Khung nổi màu trắng
+textColor = "#1E293B"             # Chữ xanh xám đậm
+font = "sans serif"
+
+[server]
+headless = true
+port = 8501
+enableCORS = false

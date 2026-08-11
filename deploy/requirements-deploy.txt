@@ -1,3 +1,4 @@
+# Lean deps for EC2 Streamlit + FastAPI /ask (no Chainlit).
 datasets
 fsspec
 pyarrow
@@ -6,12 +7,10 @@ pandas
 python-dotenv
 sentence-transformers
 transformers
-torch
 faiss-cpu>=1.8.0
 fastapi
 uvicorn
 pydantic
-pytest
 requests
 boto3
 pypdf
@@ -22,9 +21,4 @@ streamlit>=1.32.0
 plotly
 altair>=5.0.0
 bcrypt
-chainlit==2.11.1
-literalai==0.1.201
-cuid==0.4
-syncer==2.0.3
 PyJWT[crypto]
-
