@@ -113,16 +113,16 @@ def _initialize_schema(conn: Any) -> None:
 
 
 def _load_config_from_db(conn: Any) -> Dict[str, Any]:
-    cursor = conn.execute("SELECT id, top_k, temperature, max_tokens, model_name, updated_at FROM system_config WHERE id = 1")
+    cursor = conn.execute("SELECT top_k, temperature, max_tokens, model_name FROM system_config WHERE id = 1")
     row = cursor.fetchone()
     if row is None:
         return DEFAULT_CONFIG.copy()
 
     return {
-        "top_k": int(row["top_k"] if "top_k" in row.keys() else row[0]),
-        "temperature": float(row["temperature"] if "temperature" in row.keys() else row[1]),
-        "max_tokens": int(row["max_tokens"] if "max_tokens" in row.keys() else row[2]),
-        "model_name": str(row["model_name"] if "model_name" in row.keys() else row[3]),
+        "top_k": int(row[0]),
+        "temperature": float(row[1]),
+        "max_tokens": int(row[2]),
+        "model_name": str(row[3]),
     }
 
 
@@ -210,10 +210,10 @@ def initialize_config() -> bool:
                 ).fetchone()
                 if row is not None:
                     config = {
-                        "top_k": int(row["top_k"]),
-                        "temperature": float(row["temperature"]),
-                        "max_tokens": int(row["max_tokens"]),
-                        "model_name": str(row["model_name"]),
+                        "top_k": int(row[0]),
+                        "temperature": float(row[1]),
+                        "max_tokens": int(row[2]),
+                        "model_name": str(row[3]),
                     }
                 else:
                     config = DEFAULT_CONFIG.copy()
